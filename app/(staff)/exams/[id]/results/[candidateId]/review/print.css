@@ -1,0 +1,10 @@
+@page { size: A4 portrait; margin: 14mm 15mm; }
+@media print {
+  html, body { background: #fff !important; color: #111 !important; }
+  body * { visibility: hidden !important; }
+  .staff-review-print, .staff-review-print * { visibility: visible !important; }
+  .staff-review-print { display: block !important; position: absolute; inset: 0; width: 100%; font-family: Arial, sans-serif; color: #111 !important; }
+  .staff-review-toolbar, .staff-review-interactive, nav, aside { display: none !important; }
+  .staff-review-print-question { page-break-inside: avoid; break-inside: avoid-page; }
+  .staff-review-print header { break-after: avoid-page; }
+}

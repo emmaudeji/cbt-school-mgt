@@ -1,29 +1,67 @@
-import { Geist, Geist_Mono, Inter } from "next/font/google"
 
-import "./globals.css"
+import { Inter, Geist_Mono } from "next/font/google"
+import type { ReactNode } from "react"
+
+import { cn } from "@/lib/utils"
 import { ThemeProvider } from "@/components/theme-provider"
-import { cn } from "@/lib/utils";
 
-const inter = Inter({subsets:['latin'],variable:'--font-sans'})
+import { ToastContainer } from "react-toastify"
+import "react-toastify/dist/ReactToastify.css"
+import "./globals.css"
+import { getPublicBranding } from "@/services/auth"
+import { getBrandStyles } from "@/lib/brand-theme"
+import { BrandingProvider } from "@/store/branding-store"
+import { BrandThemeSync } from "@/components/common/BrandingSync"
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+})
 
 const fontMono = Geist_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
 })
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode
-}>) {
+}: {
+  children: ReactNode
+}) {
+  const branding = await getPublicBranding()
+
   return (
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("antialiased", fontMono.variable, "font-sans", inter.variable)}
+      data-school-brand
+      style={getBrandStyles(branding.appearance)}
+      className={cn(
+        "antialiased font-sans",
+        inter.variable,
+        fontMono.variable
+      )}
     >
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme={branding.appearance.mode}
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          <BrandingProvider initialBranding={branding}>
+            <BrandThemeSync />
+
+            {children}
+
+            <ToastContainer
+              position="top-right"
+              autoClose={3500}
+              newestOnTop
+              pauseOnHover
+            />
+          </BrandingProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

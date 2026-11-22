@@ -1,0 +1,15 @@
+@page { size: A4 portrait; margin: 13mm 14mm; }
+
+@media print {
+  html, body { background: #fff !important; color: #111827 !important; }
+  .candidate-report .print-hidden { display: none !important; }
+  .candidate-report { width: 100% !important; max-width: none !important; margin: 0 !important; padding: 0 !important; }
+  .candidate-report .print-sheet { border: 0 !important; box-shadow: none !important; border-radius: 0 !important; padding: 0 !important; }
+  .candidate-report .print-sheet, .candidate-report .print-sheet * { color: #111827 !important; }
+  .candidate-report .print-sheet .print-soft { background: #f3f4f6 !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .candidate-report .print-sheet .print-section { break-inside: avoid; page-break-inside: avoid; }
+  .candidate-report .print-sheet .print-page-heading { break-after: avoid; }
+  .candidate-report a { text-decoration: none !important; }
+  .candidate-report .print-footer { display: block !important; }
+  main { min-height: 0 !important; }
+}

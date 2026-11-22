@@ -1,0 +1,9 @@
+export type ImportField = "first_name" | "last_name"
+export type CandidateImportValue = { first_name: string; last_name: string }
+export type ExtractedRow = { cells: string[]; sourceLine: number }
+export type ExtractedDocument = { headers: string[] | null; rows: ExtractedRow[]; warnings: string[]; source: string }
+export type ImportRow = CandidateImportValue & { uid: string; sourceLine: number; include: boolean; notes: string[] }
+export type FieldMap = Record<ImportField, number | null>
+export type ImportIssue = { rowId: string; level: "error" | "warning"; message: string }
+export type ImportResult = { created: number; skipped: number; total: number; rows: { row: number; outcome: "created"; code: string; id: string }[] }
+export type CodePreview = { prefix: string; padding: number; nextNumber: number; codes: string[]; existingNames: string[]; provisional: boolean }
