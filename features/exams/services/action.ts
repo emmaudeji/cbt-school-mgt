@@ -56,6 +56,150 @@ export async function getExamSetupOptions(orgId?: string) {
   }
 }
 
+// 1b. isChool - Fetch school exam setup
+export type SchoolExamSetupOptions = {
+  sessions: {
+    id: string
+    name: string
+    is_current: boolean
+  }[]
+  terms: {
+    id: string
+    session_id: string
+    name: string
+    position: number
+    is_current: boolean
+  }[]
+  levels: {
+    id: string
+    name: string
+    position: number
+  }[]
+  classes: {
+    id: string
+    session_id: string
+    level_id: string
+    name: string
+  }[]
+  subjects: {
+    id: string
+    name: string
+  }[]
+  offerings: {
+    id: string
+    session_id: string
+    term_id: string
+    class_id: string
+    subject_id: string
+  }[]
+}
+
+export type SchoolExamSetupResult = {
+  options: SchoolExamSetupOptions
+  error: string | null
+}
+
+const emptyOptions: SchoolExamSetupOptions = {
+  sessions: [],
+  terms: [],
+  levels: [],
+  classes: [],
+  subjects: [],
+  offerings: [],
+}
+
+export async function getSchoolExamSetupOptions():
+  Promise<SchoolExamSetupResult> {
+  const context = await getStaffContext()
+
+  if (!context) {
+    return {
+      options: emptyOptions,
+      error: "Your session has expired.",
+    }
+  }
+
+  const db = context.supabase
+  const org = context.organizationId
+
+  const [
+    sessionsResult,
+    termsResult,
+    levelsResult,
+    classesResult,
+    subjectsResult,
+    offeringsResult,
+  ] = await Promise.all([
+    db
+      .from("school_academic_sessions")
+      .select("id, name, is_current")
+      .eq("organization_id", org)
+      .order("starts_on", { ascending: false }),
+
+    db
+      .from("school_terms")
+      .select("id, session_id, name, position, is_current")
+      .eq("organization_id", org)
+      .order("position"),
+
+    db
+      .from("school_class_levels")
+      .select("id, name, position")
+      .eq("organization_id", org)
+      .order("position"),
+
+    db
+      .from("school_classes")
+      .select("id, session_id, level_id, name")
+      .eq("organization_id", org)
+      .order("name"),
+
+    db
+      .from("school_subjects")
+      .select("id, name")
+      .eq("organization_id", org)
+      .order("name"),
+
+    db
+      .from("school_subject_offerings")
+      .select(
+        "id, session_id, term_id, class_id, subject_id"
+      )
+      .eq("organization_id", org),
+  ])
+
+  const errors = [
+    sessionsResult.error,
+    termsResult.error,
+    levelsResult.error,
+    classesResult.error,
+    subjectsResult.error,
+    offeringsResult.error,
+  ].filter(Boolean)
+
+  if (errors.length) {
+    console.error("[SCHOOL:EXAM_SETUP_OPTIONS]", errors)
+
+    return {
+      options: emptyOptions,
+      error: "Unable to load school academic options.",
+    }
+  }
+
+  return {
+    options: {
+      sessions: sessionsResult.data ?? [],
+      terms: termsResult.data ?? [],
+      levels: levelsResult.data ?? [],
+      classes: classesResult.data ?? [],
+      subjects: subjectsResult.data ?? [],
+      offerings: offeringsResult.data ?? [],
+    },
+    error: null,
+  }
+}
+
+
 // 2. Create or reuse a question bank
 export async function createQuestionBankAction(
   name: string,
@@ -260,6 +404,140 @@ export async function createExamAction(
   revalidatePath(urls.exams)
   redirect(urls.examDetails(data.slug))
 }
+
+// 4b. Create isSchool specific exams
+export type SchoolCreateExamState = {
+  error: string | null
+}
+
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function read(data: FormData, key: string) {
+  return String(data.get(key) ?? "").trim()
+}
+
+export async function createSchoolExamAction(
+  previousState: SchoolCreateExamState,
+  formData: FormData
+): Promise<SchoolCreateExamState> {
+  const context = await getStaffContext()
+
+  if (!context) redirect(urls.login)
+
+  const mode = read(formData, "exam_mode")
+
+  if (mode === "independent") {
+    return createExamAction(previousState, formData)
+  }
+
+  if (mode !== "school") {
+    return {
+      error: "Select a valid examination type.",
+    }
+  }
+
+  const title = read(formData, "title")
+  const description = read(formData, "description")
+  const bankId = read(formData, "default_bank_id")
+  const categoryId = read(formData, "default_category_id")
+
+  const targetScope = read(formData, "target_scope")
+  const assignmentScope = read(
+    formData,
+    "assignment_scope"
+  )
+
+  const offeringIds = formData
+    .getAll("school_offering_ids")
+    .map(String)
+
+  if (title.length < 2 || title.length > 200) {
+    return {
+      error: "Examination title must contain 2–200 characters.",
+    }
+  }
+
+  if (description.length > 1000) {
+    return {
+      error: "Description cannot exceed 1,000 characters.",
+    }
+  }
+
+  if (!UUID.test(bankId) || !UUID.test(categoryId)) {
+    return {
+      error: "Choose a valid question bank and topic.",
+    }
+  }
+
+  if (
+    offeringIds.length < 1 ||
+    offeringIds.length > 100 ||
+    !offeringIds.every((id) => UUID.test(id)) ||
+    new Set(offeringIds).size !== offeringIds.length
+  ) {
+    return {
+      error: "Select valid class arms with subject offerings.",
+    }
+  }
+
+  if (!["level", "arms"].includes(targetScope)) {
+    return {
+      error: "Choose entire-level or selected-arm coverage.",
+    }
+  }
+
+  if (!["class", "selected"].includes(assignmentScope)) {
+    return {
+      error: "Choose a valid student assignment scope.",
+    }
+  }
+
+  const slug = [
+    toSlug(title).slice(0, 190).replace(/-+$/, ""),
+    crypto.randomUUID().slice(0, 8),
+  ].join("-")
+
+  const { data, error } = await context.supabase.rpc(
+    "school_create_cbt_exam_for_classes",
+    {
+      p_title: title,
+      p_description: description,
+      p_slug: slug,
+      p_bank_id: bankId,
+      p_category_id: categoryId,
+      p_offering_ids: offeringIds,
+      p_target_scope: targetScope,
+      p_assignment_scope: assignmentScope,
+    }
+  )
+
+  if (error) {
+    console.error("[SCHOOL:CREATE_MULTI_CLASS_EXAM]", {
+      organizationId: context.organizationId,
+      code: error.code,
+      message: error.message,
+    })
+
+    return {
+      error:
+        error.code === "42501"
+          ? "You do not have permission to create school examinations."
+          : error.message ||
+            "Unable to create the school examination.",
+    }
+  }
+
+  if (typeof data !== "string" || !data) {
+    return {
+      error: "The new examination could not be confirmed.",
+    }
+  }
+
+  revalidatePath(urls.exams)
+  redirect(urls.examDetails(data))
+}
+
 
 
 // 5. Create Question Topics

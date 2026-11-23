@@ -1,38 +1,69 @@
 
 import Link from "next/link"
-import { ArrowLeft } from "lucide-react"
 import { Suspense } from "react"
+import {
+  ArrowLeft,
+  ClipboardCheck,
+  GraduationCap,
+} from "lucide-react"
 
 import { urls } from "@/constants"
 import { PageShell } from "@/components/layout/PageShell"
 import PageLoader from "@/components/common/PageLoader"
-
-import NewExamForm from "@/features/exams/components/NewExamForm"
 import ErrorState from "@/components/common/ErrorState"
-import { getExamSetupOptions } from "@/features/exams/services/action"
+
+import NewExamForm from
+  "@/features/exams/components/NewExamForm"
+
+import {
+  getExamSetupOptions,
+  getSchoolExamSetupOptions,
+} from "@/features/exams/services/action"
+
+const isSchool = true
 
 export default function NewExamPage() {
   return (
-    <PageShell className="max-w-4xl space-y-4">
-      <header className="space-y-3">
+    <PageShell className="max-w-5xl space-y-4">
+      <div className="space-y-3">
         <Link
           href={urls.exams}
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-2 text-sm font-medium text-foreground/80 transition-colors hover:text-primary"
         >
           <ArrowLeft className="size-4" />
           Examinations
         </Link>
 
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Set New Test
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Name your test, select a question bank and subject.
-            You can add questions and configure the examination next.
-          </p>
-        </div>
-      </header>
+        <header className="flex items-start gap-3">
+          <div
+            className={
+              isSchool
+                ? "flex size-11 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white"
+                : "flex size-11 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white"
+            }
+          >
+            {isSchool ? (
+              <GraduationCap className="size-6" />
+            ) : (
+              <ClipboardCheck className="size-6" />
+            )}
+          </div>
+
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {isSchool
+                ? "Create School Examination"
+                : "Create New Test"}
+            </h1>
+
+            <p className="mt-1 text-sm text-foreground/75">
+              {isSchool
+                ? "Set the academic details, choose a question bank and save your examination draft."
+                : "Name your test, organize its questions and save a draft."}
+            </p>
+          </div>
+        </header>
+      </div>
 
       <Suspense fallback={<PageLoader />}>
         <Wrapper />
@@ -42,18 +73,32 @@ export default function NewExamPage() {
 }
 
 async function Wrapper() {
-  const { banks, categories, error } = await getExamSetupOptions()
+  const [cbt, school] = await Promise.all([
+    getExamSetupOptions(),
+    isSchool
+      ? getSchoolExamSetupOptions()
+      : Promise.resolve(null),
+  ])
 
-  if (error) {
+  if (cbt.error || school?.error) {
     return (
-      <ErrorState header="Something went wrong" text={error}/>
+      <ErrorState
+        header="Unable to load examination setup"
+        text={
+          cbt.error ||
+          school?.error ||
+          "Please try again."
+        }
+      />
     )
   }
 
   return (
     <NewExamForm
-      banks={banks}
-      categories={categories}
+      banks={cbt.banks}
+      categories={cbt.categories}
+      isSchool={isSchool}
+      schoolOptions={school?.options}
     />
   )
 }
