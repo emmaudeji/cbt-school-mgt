@@ -1,13 +1,24 @@
+
 "use client"
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { FileCheck2, Info, Loader2, RefreshCw } from "lucide-react"
+import {
+  AlertTriangle,
+  BookOpen,
+  CheckCircle2,
+  FileCheck2,
+  GraduationCap,
+  Info,
+  Layers3,
+  Loader2,
+  RefreshCw,
+  Users,
+} from "lucide-react"
 import { toast } from "react-toastify"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,29 +30,73 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 
+import { urls } from "@/constants"
 import type { ExamSettings } from "@/types/exam-settings"
-import type { ExamPublicationOverview } from "../../services/queries"
+import type {
+  ExamAccessMode,
+  ExamPublicationOverview,
+  SchoolExamSummary,
+} from "../../services/queries"
+
 import { publishExamAction } from "../../services/action"
 import { checkExamPublicationReadiness } from "../../services/publication-readiness"
-import { PublicationReadinessChecklist } from "./PublicationReadinessChecklist"
-import { urls } from "@/constants"
-import { examAccessLabels, ExamPublicationAccessGuide } from "./ExamPublicationAccessGuide"
 
-type ExamAccessMode =
-  | "access_code"
-  | "open_link"
-  | "registered"
+import { PublicationReadinessChecklist } from "./PublicationReadinessChecklist"
+import {
+  ExamPublicationAccessGuide,
+  examAccessLabels,
+} from "./ExamPublicationAccessGuide"
+import { SchoolPublicationChoice } from "./SchoolPublicationChoice"
+import { useSchoolPublicationWorkflow } from "./useSchoolPublicationWorkflow"
+
+import type {
+  AssignmentChoice,
+} from "../../services/assignment/school-publication-actions"
 
 type Props = {
   exam: ExamSettings
   overview: ExamPublicationOverview
-  currentAccessMode?: ExamAccessMode | null
+  schoolSummary?: SchoolExamSummary | null
 }
 
- 
+const assignmentLabels: Record<AssignmentChoice, string> = {
+  all: "Automatically assign students in the selected classes",
+  specific: "Assign selected students",
+  later: "Assign students later",
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string | number
+  tone: "blue" | "violet" | "emerald" | "amber"
+}) {
+  const colors = {
+    blue: "border-blue-500/20 bg-blue-500/5",
+    violet: "border-violet-500/20 bg-violet-500/5",
+    emerald: "border-emerald-500/20 bg-emerald-500/5",
+    amber: "border-amber-500/20 bg-amber-500/5",
+  }
+
+  return (
+    <div className={`rounded-lg border p-3 ${colors[tone]}`}>
+      <p className="text-[11px] font-semibold text-foreground/75">
+        {label}
+      </p>
+      <p className="mt-1 text-xl font-bold tabular-nums">
+        {value}
+      </p>
+    </div>
+  )
+}
+
 export function ExamPublishPanel({
   exam,
   overview,
+  schoolSummary = null,
 }: Props) {
   const router = useRouter()
 
@@ -50,20 +105,34 @@ export function ExamPublishPanel({
   const [serverError, setServerError] = useState<string | null>(null)
   const [checkTime, setCheckTime] = useState(() => Date.now())
 
-  const currentAccessMode =
-    overview.latestPublication?.accessMode ?? null
+  const isSchoolExam = schoolSummary !== null
+  const noun = isSchoolExam ? "Examination" : "Test"
 
-  // On a new revision, retain the previous access method
-  // unless the teacher deliberately changes it.
+  const latestPublication = overview.latestPublication
+  const currentMode = latestPublication?.accessMode ?? null
+  const isRevision = Boolean(latestPublication)
+  const nextRevision = (latestPublication?.revision ?? 0) + 1
+
+  // Preserve the current access method when republishing.
+  // New school exams default to registered student accounts.
   const [accessMode, setAccessMode] =
     useState<ExamAccessMode | null>(
-      currentAccessMode!
+      currentMode ?? (isSchoolExam ? "registered" : null)
     )
 
-  const isRevision = Boolean(overview.latestPublication)
+  // School examinations default to automatic class assignment.
+  const [assignmentChoice, setAssignmentChoice] =
+    useState<AssignmentChoice>("all")
 
-  const nextRevision =
-    (overview.latestPublication?.revision ?? 0) + 1
+  const [selectedStudentIds, setSelectedStudentIds] =
+    useState<string[]>([])
+
+  const schoolWorkflow = useSchoolPublicationWorkflow()
+
+  // Public-link mode currently uses the existing public
+  // registration workflow, not private school preassignment.
+  const effectiveChoice: AssignmentChoice =
+    accessMode === "open_link" ? "later" : assignmentChoice
 
   const issues = checkExamPublicationReadiness(
     exam,
@@ -80,33 +149,76 @@ export function ExamPublishPanel({
   )
 
   const ready = blockers.length === 0
-  const canPublish = ready && !!accessMode && !pending
 
-  const accessChanged =
+  const requiresSelection =
+    isSchoolExam &&
+    effectiveChoice === "specific"
+
+  const selectionReady =
+    !requiresSelection || selectedStudentIds.length > 0
+
+  const recovering = Boolean(schoolWorkflow.recovery)
+
+  const busy = pending || schoolWorkflow.working
+
+  const canPublish =
+    ready &&
+    Boolean(accessMode) &&
+    selectionReady &&
+    !busy &&
+    !recovering
+
+  const changed =
     isRevision &&
-    currentAccessMode !== null &&
-    accessMode !== currentAccessMode
+    Boolean(currentMode) &&
+    accessMode !== currentMode
 
-  const refreshChecks = () => {
+  function refreshChecks() {
+    if (busy || recovering) return
+
     setCheckTime(Date.now())
     setServerError(null)
     router.refresh()
   }
 
-  const publish = () => {
-    if (pending || !accessMode) return
+  function handleAccessChange(mode: ExamAccessMode) {
+    if (busy || recovering) return
 
-    const currentIssues = checkExamPublicationReadiness(
+    setAccessMode(mode)
+    setServerError(null)
+
+    // Specific-student selections made for one access method
+    // should be reviewed before changing to another.
+    if (mode !== accessMode) {
+      setSelectedStudentIds([])
+    }
+
+    if (mode === "open_link") {
+      setAssignmentChoice("later")
+    }
+  }
+
+  function handleAssignmentChoice(choice: AssignmentChoice) {
+    if (busy || recovering) return
+
+    setAssignmentChoice(choice)
+    setServerError(null)
+
+    if (choice !== "specific") {
+      setSelectedStudentIds([])
+    }
+  }
+
+  function publish() {
+    if (!canPublish || !accessMode) return
+
+    const latestIssues = checkExamPublicationReadiness(
       exam,
       overview,
       Date.now()
     )
 
-    if (
-      currentIssues.some(
-        issue => issue.severity === "blocker"
-      )
-    ) {
+    if (latestIssues.some(issue => issue.severity === "blocker")) {
       setConfirmOpen(false)
       setCheckTime(Date.now())
       return
@@ -116,36 +228,98 @@ export function ExamPublishPanel({
 
     startTransition(async () => {
       try {
-        const response = await publishExamAction(
+        // SCHOOL EXAMINATION:
+        // Publish, then assign initial students to
+        // the newly created publication revision.
+        if (isSchoolExam) {
+          const result = await schoolWorkflow.publish({
+            examId: exam.id,
+            slug: exam.slug,
+            mode: accessMode,
+            choice: effectiveChoice,
+            selectedIds:
+              effectiveChoice === "specific"
+                ? selectedStudentIds
+                : [],
+          })
+
+          setConfirmOpen(false)
+
+          if (!result.success) {
+            const message = result.published
+                    ? (
+                        "The examination has been published, but its " +
+                        "assessment integration or initial student " +
+                        "assignments are incomplete. " +
+                        result.error +
+                        " Use Continue Publication Setup below. " +
+                        "Do not publish another revision."
+                      )
+                    : result.error
+
+            setServerError(message)
+
+           toast.error(
+                result.published
+                  ? "Published, but setup needs attention."
+                  : "Publication failed. Review the details."
+              )
+
+            return
+          }
+
+          toast.success(
+            effectiveChoice === "later"
+              ? `Revision ${result.revision} published successfully.`
+              : (
+                `Revision ${result.revision} published. ` +
+                `${result.assigned} students assigned or restored.`
+              )
+          )
+
+          if (result.skippedNoAccount > 0) {
+            toast.info(
+              `${result.skippedNoAccount} students need ` +
+              "registered accounts before they can be assigned."
+            )
+          }
+
+          router.push(urls.examCandidates(exam.slug))
+          router.refresh()
+          return
+        }
+
+        // INDEPENDENT CBT:
+        // Preserve the original publishing workflow.
+        const result = await publishExamAction(
           exam.id,
           exam.slug,
           accessMode
         )
 
-        if (!response.success) {
+        if (!result.success) {
           setServerError(
-            response.error ??
-              "The examination could not be published."
+            result.error ?? "Unable to publish the test."
           )
-
           setConfirmOpen(false)
           toast.error("Publication failed. Review the details.")
           return
         }
 
         setConfirmOpen(false)
-        setServerError(null)
 
         toast.success(
-          `Revision ${response.revision} published successfully.`
+          `Revision ${result.revision} published successfully.`
         )
 
         router.push(urls.examCandidates(exam.slug))
+        router.refresh()
       } catch (error) {
         console.error("[CBT:PUBLISH_EXAM]", error)
 
         setServerError(
-          "Publication could not be confirmed. Refresh the page and check the latest revision before retrying."
+          "Publication could not be confirmed. " +
+          "Refresh and verify the latest revision before retrying."
         )
 
         setConfirmOpen(false)
@@ -154,57 +328,163 @@ export function ExamPublishPanel({
     })
   }
 
+  async function resumeAssignments() {
+    if (!recovering || busy) return
+
+    setServerError(null)
+
+    try {
+      const result = await schoolWorkflow.retry()
+
+      if (!result.success) {
+        setServerError(
+          "The examination is already published, " +
+          "but some assignments remain incomplete. " +
+          result.error
+        )
+
+        toast.error("Unable to complete student assignments.")
+        return
+      }
+
+      toast.success(
+        `Student assignments completed for revision ${result.revision}.`
+      )
+
+      if (result.skippedNoAccount > 0) {
+        toast.info(
+          `${result.skippedNoAccount} students need ` +
+          "registered accounts."
+        )
+      }
+
+      router.push(urls.examCandidates(exam.slug))
+      router.refresh()
+    } catch (error) {
+      console.error("[CBT:RESUME_ASSIGNMENTS]", error)
+
+      setServerError(
+        "Assignment completion could not be confirmed. " +
+        "Review the candidate roster before trying again."
+      )
+
+      toast.error("Unable to confirm student assignments.")
+    }
+  }
+
   return (
-    <Card className="gap-0 overflow-hidden rounded-xl border border-primary/20 bg-background py-0 shadow-none">
-      <CardHeader className="border-b border-primary/15 bg-primary/5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10">
-              <FileCheck2 className="size-5 text-primary" />
+    <div className="overflow-hidden rounded-xl border bg-card shadow-none">
+      {/* HEADER */}
+      <header className="border-b bg-primary/5 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div
+              className={`flex size-10 shrink-0 items-center justify-center rounded-lg text-white ${
+                isSchoolExam
+                  ? "bg-blue-600"
+                  : "bg-violet-600"
+              }`}
+            >
+              <FileCheck2 className="size-5" />
             </div>
 
             <div>
-              <CardTitle className="text-base font-bold">
+              <h2 className="text-lg font-bold">
                 {isRevision
-                  ? "Publish Updated Revision"
-                  : "Publish Examination"}
-              </CardTitle>
+                  ? `Publish Updated ${noun}`
+                  : `Publish ${noun}`}
+              </h2>
 
-              <CardDescription className="mt-1 text-foreground/85">
-                Review the examination and choose how
-                participants will access it.
-              </CardDescription>
+              <p className="mt-1 text-sm font-semibold text-foreground/85">
+                {exam.title}
+              </p>
+
+              <p className="mt-1 text-xs text-foreground/75">
+                Review examination content, access,
+                candidate assignment and readiness.
+              </p>
             </div>
           </div>
 
-          {overview.latestPublication && (
-            <Badge
-              variant="outline"
-              className="border-primary/25 bg-primary/10 text-foreground"
-            >
-              Current revision{" "}
-              {overview.latestPublication.revision}
-            </Badge>
-          )}
+          <Badge
+            variant="outline"
+            className="border-primary/25 bg-background"
+          >
+            {isRevision
+              ? `Current revision ${nextRevision - 1}`
+              : "First Publication"}
+          </Badge>
         </div>
-      </CardHeader>
+      </header>
 
-      <CardContent className="  py-5">
-        {/* Publication overview */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="space-y-5 p-4">
+        {/* SCHOOL ACADEMIC CONTEXT */}
+        {schoolSummary && (
+          <section className="space-y-3 rounded-lg border border-blue-500/25 bg-blue-500/5 p-3">
+            <div className="flex items-center gap-2">
+              <GraduationCap className="size-4 text-blue-600" />
+
+              <h3 className="text-sm font-bold">
+                School Examination Coverage
+              </h3>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                schoolSummary.sessionName,
+                schoolSummary.termName,
+                schoolSummary.levelName,
+                schoolSummary.subjectName,
+              ]
+                .filter(Boolean)
+                .map(item => (
+                  <Badge
+                    key={item}
+                    variant="outline"
+                    className="border-blue-500/20 bg-background"
+                  >
+                    {item}
+                  </Badge>
+                ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Users className="size-3.5 text-blue-600" />
+
+              {schoolSummary.classNames.map(name => (
+                <Badge key={name} variant="secondary">
+                  {name}
+                </Badge>
+              ))}
+            </div>
+
+            <p className="text-xs leading-5 text-foreground/80">
+              These classes define the examination's academic
+              coverage and default initial assignment group.
+              Students from other classes can still be assigned
+              later, including for retakes or special examinations.
+            </p>
+          </section>
+        )}
+
+        {/* STATISTICS */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat
             label="Sections"
             value={overview.sections.length}
+            tone="blue"
           />
 
           <Stat
             label="Questions"
             value={overview.questionCount}
+            tone="violet"
           />
 
           <Stat
             label="Next Revision"
             value={nextRevision}
+            tone="emerald"
           />
 
           <Stat
@@ -214,85 +494,208 @@ export function ExamPublishPanel({
                 ? "Ready"
                 : `${blockers.length} to fix`
             }
-            highlight
+            tone={ready ? "emerald" : "amber"}
           />
         </div>
 
-        {/* Actual selectable access method */}
+        {/* QUESTION SECTIONS */}
+        {overview.sections.length > 0 && (
+          <details className="rounded-lg border">
+            <summary className="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm font-semibold">
+              <Layers3 className="size-4 text-violet-600" />
+
+              Review Question Sections
+
+              <span className="ml-auto text-xs text-foreground/70">
+                {overview.sections.length} sections
+              </span>
+            </summary>
+
+            <div className="divide-y border-t">
+              {overview.sections.map(section => (
+                <div
+                  key={section.id}
+                  className="flex justify-between gap-3 px-3 py-2 text-sm"
+                >
+                  <span className="min-w-0 truncate">
+                    {section.title}
+                  </span>
+
+                  <span className="shrink-0 font-bold tabular-nums">
+                    {section.questionCount} questions
+                  </span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
+        {/* EXAM ACCESS METHOD */}
         <ExamPublicationAccessGuide
           examSlug={exam.slug}
           value={accessMode}
-          onChange={mode => {
-            setAccessMode(mode)
-            setServerError(null)
-          }}
-          currentAccessMode={currentAccessMode}
+          onChange={handleAccessChange}
+          currentAccessMode={currentMode}
           published={isRevision}
-          disabled={pending}
+          disabled={busy || recovering}
+          isSchoolExam={isSchoolExam}
         />
 
-        {/* Revision information */}
+        {/* SCHOOL INITIAL ASSIGNMENT */}
+        {isSchoolExam && (
+          <SchoolPublicationChoice
+            examId={exam.id}
+            slug={exam.slug}
+            accessMode={accessMode}
+            choice={effectiveChoice}
+            onChoice={handleAssignmentChoice}
+            selectedIds={selectedStudentIds}
+            onSelectedIds={ids => {
+              setSelectedStudentIds(ids)
+              setServerError(null)
+            }}
+            disabled={busy || recovering}
+          />
+        )}
+
+        {/* REVISION GUIDANCE */}
         {isRevision && (
-          <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
-            <Info className="mt-0.5 size-4 shrink-0 text-primary" />
+          <div className="flex gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3">
+            <Info className="mt-0.5 size-4 shrink-0 text-amber-600" />
 
-            <div className="space-y-1 text-sm">
-              <p className="font-bold text-foreground">
-                Publishing a new revision
-              </p>
+            <p className="text-xs leading-5">
+              Publishing a new revision seals the current
+              examination blueprint and settings.
 
-              <p className="leading-6 text-foreground/85">
-                The new revision uses your saved settings
-                and question blueprint. Existing attempts
-                remain attached to their original revision.
-                Candidate assignments and access links are
-                not automatically transferred.
-              </p>
-            </div>
+              Existing attempts remain associated with their
+              original revisions.
+
+              {isSchoolExam
+                ? (
+                  " The student assignment choice above controls " +
+                  "the initial assignments for this new revision. " +
+                  "Previously issued Exam Numbers are not " +
+                  "automatically transferred."
+                )
+                : (
+                  " Candidate assignments and access details " +
+                  "do not automatically transfer."
+                )}
+            </p>
           </div>
         )}
 
-        {/* Existing readiness validation */}
+        {/* ASSIGNMENT RECOVERY */}
+        {isSchoolExam && recovering && (
+          <section
+            role="status"
+            className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4"
+          >
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-300" />
+
+              <div className="min-w-0 space-y-1">
+                <h3 className="text-sm font-bold">
+                  Examination published, setup incomplete
+                </h3>
+
+                <p className="text-xs leading-5 text-foreground/80">
+                    Revision {schoolWorkflow.recovery?.revision} has
+                    already been published.
+
+                    Assessment integration or initial student assignments
+                    still need attention. Complete the existing revision
+                    rather than publishing another one.
+                  </p>
+                {schoolWorkflow.working
+                  ? "Completing Setup..."
+                  : "Continue Publication Setup"}
+
+                {schoolWorkflow.error && (
+                  <p className="text-xs text-amber-800 dark:text-amber-300">
+                    {schoolWorkflow.error}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => void resumeAssignments()}
+                className="shadow-none"
+              >
+                {schoolWorkflow.working
+                  ? <Loader2 className="size-4 animate-spin" />
+                  : <RefreshCw className="size-4" />}
+
+                {schoolWorkflow.working
+                  ? "Completing Assignments..."
+                  : "Continue Assignments"}
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                onClick={() =>
+                  router.push(urls.examCandidates(exam.slug))
+                }
+                className="shadow-none"
+              >
+                View Candidates
+              </Button>
+            </div>
+          </section>
+        )}
+
+        {/* PUBLICATION READINESS */}
         <PublicationReadinessChecklist
           issues={issues}
           serverError={serverError}
         />
 
-        {/* Publish actions */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-primary/15 pt-4">
-          <div className="space-y-1">
-            <p className="text-sm font-bold text-foreground">
-              {!accessMode
-                ? "Choose an access method"
-                : !ready
-                  ? "Resolve the issues above"
-                  : "Ready for final validation"}
+        {/* PRIMARY ACTIONS */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+          <div>
+            <p className="text-sm font-bold">
+              {recovering
+                ? "Complete the existing publication"
+                : !accessMode
+                  ? "Select an access method"
+                  : !ready
+                    ? "Resolve publication blockers"
+                    : !selectionReady
+                      ? "Select students before publishing"
+                      : "Ready for final validation"}
             </p>
 
-            <p className="text-xs font-medium text-foreground/80">
+            <p className="mt-1 text-xs leading-5 text-foreground/75">
               {accessMode
                 ? `Access: ${examAccessLabels[accessMode]}`
-                : "Select how participants will enter."}
-            </p>
+                : "Choose how participants will enter."}
 
-            {warnings.length > 0 && (
-              <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
-                {warnings.length} warning(s) to review.
-              </p>
-            )}
+              {isSchoolExam && accessMode && (
+                <>
+                  {" · "}
+                  {assignmentLabels[effectiveChoice]}
+                </>
+              )}
+            </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
-              variant="outline"
               size="sm"
-              disabled={pending}
+              variant="outline"
+              disabled={busy || recovering}
               onClick={refreshChecks}
               className="shadow-none"
             >
               <RefreshCw className="size-4" />
-              Refresh checks
+              Refresh Checks
             </Button>
 
             <Button
@@ -301,86 +704,163 @@ export function ExamPublishPanel({
               onClick={() => setConfirmOpen(true)}
               className="shadow-none"
             >
-              {pending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <FileCheck2 className="size-4" />
-              )}
+              {busy
+                ? <Loader2 className="size-4 animate-spin" />
+                : <FileCheck2 className="size-4" />}
 
-              {pending
+              {busy
                 ? "Publishing..."
                 : isRevision
                   ? "Publish New Revision"
-                  : "Publish Examination"}
+                  : `Publish ${noun}`}
             </Button>
           </div>
         </div>
-      </CardContent>
+      </div>
 
-      {/* Final confirmation */}
+      {/* CONFIRM PUBLICATION */}
       <AlertDialog
         open={confirmOpen}
         onOpenChange={open => {
-          if (!pending) setConfirmOpen(open)
+          if (!busy && !recovering) {
+            setConfirmOpen(open)
+          }
         }}
       >
-        <AlertDialogContent className="border-primary/20 shadow-none">
+        <AlertDialogContent className="max-w-md shadow-none">
           <AlertDialogHeader>
             <AlertDialogTitle>
               {isRevision
-                ? `Publish revision ${nextRevision}?`
-                : "Publish this examination?"}
+                ? `Publish Revision ${nextRevision}?`
+                : `Publish ${noun}?`}
             </AlertDialogTitle>
 
-            <AlertDialogDescription className="text-foreground/85">
-              This creates a sealed examination revision
-              with your selected access method.
-              Check the details before confirming.
+            <AlertDialogDescription>
+              Confirm the examination, access method and
+              initial candidate assignment.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm">
-            <p className="font-bold text-foreground">
-              {exam.title}
-            </p>
-
-            <p className="text-foreground/85">
-              {overview.questionCount} questions ·{" "}
-              {overview.sections.length} sections ·{" "}
-              Revision {nextRevision}
-            </p>
-
-            <div className="rounded-lg border border-primary/20 bg-background p-3">
-              <p className="text-xs font-semibold text-foreground/75">
-                Selected access method
+          <div className="space-y-3">
+            <div className="rounded-lg border bg-primary/5 p-3">
+              <p className="text-sm font-bold">
+                {exam.title}
               </p>
 
-              <p className="mt-1 text-base font-bold text-primary">
+              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                <span className="flex items-center gap-1">
+                  <BookOpen className="size-3.5" />
+                  {overview.questionCount} questions
+                </span>
+
+                <span>
+                  · {overview.sections.length} sections
+                </span>
+
+                <span>
+                  · Revision {nextRevision}
+                </span>
+              </div>
+
+              <p className="mt-3 text-sm font-semibold text-primary">
                 {accessMode
                   ? examAccessLabels[accessMode]
-                  : "Not selected"}
+                  : "No access selected"}
               </p>
+
+              {schoolSummary && (
+                <p className="mt-1 text-xs text-foreground/80">
+                  {schoolSummary.levelName}
+                  {" · "}
+                  {schoolSummary.subjectName}
+                  {" · "}
+                  {schoolSummary.classNames.length} class arm(s)
+                </p>
+              )}
             </div>
 
-            {accessChanged && (
-              <p className="font-medium leading-6 text-amber-800 dark:text-amber-300">
-                This new revision will use a different
-                access method. Previous candidate
-                assignments and access links will
-                remain with the older revision.
-              </p>
+            {/* CONFIRM INITIAL STUDENT ASSIGNMENT */}
+            {isSchoolExam && (
+              <div className="rounded-lg border border-blue-500/25 bg-blue-500/5 p-3">
+                <div className="flex items-center gap-2">
+                  <Users className="size-4 text-blue-600" />
+
+                  <p className="text-sm font-semibold">
+                    Initial Student Assignment
+                  </p>
+                </div>
+
+                <p className="mt-2 text-xs leading-5">
+                  {assignmentLabels[effectiveChoice]}
+                </p>
+
+                {effectiveChoice === "all" && (
+                  <p className="mt-1 text-xs text-foreground/75">
+                    All eligible students currently enrolled in the
+                    selected examination classes will be processed
+                    after publication.
+                  </p>
+                )}
+
+                {effectiveChoice === "specific" && (
+                  <p className="mt-1 text-xs font-semibold">
+                    {selectedStudentIds.length} student(s) selected
+                  </p>
+                )}
+
+                {effectiveChoice === "later" && (
+                  <p className="mt-1 text-xs text-foreground/75">
+                    No automatic assignments will be created.
+                    Students can be added from any school class later.
+                  </p>
+                )}
+
+                {effectiveChoice !== "later" &&
+                  accessMode === "registered" && (
+                    <p className="mt-2 text-xs text-foreground/75">
+                      Students without ready registered accounts
+                      will be reported for follow-up.
+                    </p>
+                  )}
+
+                {effectiveChoice !== "later" &&
+                  accessMode === "access_code" && (
+                    <p className="mt-2 text-xs text-foreground/75">
+                      Students will receive individual Exam Numbers
+                      through the existing credential system.
+                    </p>
+                  )}
+              </div>
+            )}
+
+            {/* CHANGING ACCESS BETWEEN REVISIONS */}
+            {changed && (
+              <div className="flex gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
+                <AlertTriangle className="size-4 shrink-0 text-amber-600" />
+
+                <p className="text-xs leading-5">
+                  The access method for this new revision differs
+                  from the current publication.
+
+                  Existing candidates and attempts remain on their
+                  previous revisions unless separately assigned
+                  to the new publication.
+                </p>
+              </div>
             )}
 
             {warnings.length > 0 && (
-              <p className="font-medium text-amber-800 dark:text-amber-300">
-                There are {warnings.length} non-blocking
-                warning(s) to review.
+              <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                {warnings.length} non-blocking warning(s) remain.
               </p>
             )}
           </div>
 
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={pending}>
+            <AlertDialogCancel
+              disabled={busy}
+              className="shadow-none"
+            >
               Cancel
             </AlertDialogCancel>
 
@@ -390,46 +870,19 @@ export function ExamPublishPanel({
                 event.preventDefault()
                 publish()
               }}
+              className="shadow-none"
             >
-              {pending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <FileCheck2 className="size-4" />
-              )}
+              {busy
+                ? <Loader2 className="size-4 animate-spin" />
+                : <CheckCircle2 className="size-4" />}
 
-              {pending
+              {busy
                 ? "Publishing..."
                 : "Confirm Publication"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Card>
-  )
-}
-
-function Stat({
-  label,
-  value,
-  highlight = false,
-}: {
-  label: string
-  value: number | string
-  highlight?: boolean
-}) {
-  return (
-    <div
-      className={`rounded-lg border border-primary/20 p-3 ${
-        highlight ? "bg-primary/10" : "bg-primary/5"
-      }`}
-    >
-      <p className="text-xs font-medium text-foreground/75">
-        {label}
-      </p>
-
-      <p className="mt-1 text-lg font-bold tabular-nums text-foreground">
-        {value}
-      </p>
     </div>
   )
 }

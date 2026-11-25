@@ -2,19 +2,28 @@
 import { Suspense } from "react"
 
 import PageLoader from "@/components/common/PageLoader"
-import { ExamQuestions } from "@/features/exams/components/ExamQuestions"
-import { ExamQuestionEditingProvider } from "@/features/exams/context/ExamQuestionEditingProvider"
+
+import { ExamQuestions } from
+  "@/features/exams/components/ExamQuestions"
+
+import { ExamQuestionEditingProvider } from
+  "@/features/exams/context/ExamQuestionEditingProvider"
+
 import {
   getExamCorrectAnswers,
   getExamQuestions,
   getOrganizationSectionTemplates,
+  getSchoolExamSummary,
 } from "@/features/exams/services/queries"
+ 
 
 type Props = {
   params: Promise<{ id: string }>
 }
 
-export default function ExamPage({ params }: Props) {
+export default function ExamPage({
+  params,
+}: Props) {
   return (
     <Suspense fallback={<PageLoader />}>
       <Wrapper params={params} />
@@ -22,22 +31,38 @@ export default function ExamPage({ params }: Props) {
   )
 }
 
-async function Wrapper({ params }: Props) {
+async function Wrapper({
+  params,
+}: Props) {
   const { id: slug } = await params
 
-  const [result, sectionTemplates] = await Promise.all([
+  const [
+    result,
+    sectionTemplates,
+  ] = await Promise.all([
     getExamQuestions(slug),
     getOrganizationSectionTemplates(),
   ])
 
-  const { exam, sections, questionCount, topics } = result
+  const {
+    exam,
+    sections,
+    questionCount,
+    topics,
+  } = result
 
-  const correctAnswers = await getExamCorrectAnswers(exam.id)
+  const [
+    correctAnswers,
+    schoolSummary,
+  ] = await Promise.all([
+    getExamCorrectAnswers(exam.id),
+    getSchoolExamSummary(exam.id),
+  ])
 
   return (
     <ExamQuestionEditingProvider
       slug={exam.slug}
-      sections={sections.map(section => ({
+      sections={sections.map((section) => ({
         id: section.id,
         name: section.title,
       }))}
@@ -50,6 +75,7 @@ async function Wrapper({ params }: Props) {
         topics={topics}
         correctAnswers={correctAnswers}
         sectionTemplates={sectionTemplates}
+        schoolSummary={schoolSummary}
       />
     </ExamQuestionEditingProvider>
   )

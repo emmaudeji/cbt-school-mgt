@@ -1,4 +1,3 @@
-import { SchoolSummary } from "./types/school"
 
 export type OrganizationType =
   | "school"

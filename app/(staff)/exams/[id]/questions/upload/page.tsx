@@ -2,9 +2,18 @@
 import { Suspense } from "react"
 
 import PageLoader from "@/components/common/PageLoader"
-import { getQuestionEditorOptions } from "@/features/exams/services/queries"
-import { QuestionImportProvider } from "@/features/exams/context/QuestionImportProvider"
-import { UploadQuestions } from "@/features/exams/components/UploadQuestions"
+
+import {
+  getQuestionEditorOptions,
+} from "@/features/exams/services/queries"
+
+import {
+  QuestionImportProvider,
+} from "@/features/exams/context/QuestionImportProvider"
+
+import {
+  UploadQuestions,
+} from "@/features/exams/components/UploadQuestions"
 
 type Props = {
   params: Promise<{ id: string }>
@@ -45,7 +54,8 @@ async function Wrapper({
       : ""
 
   const initialSectionId = sections.some(
-    section => section.id === requestedSectionId
+    (section) =>
+      section.id === requestedSectionId
   )
     ? requestedSectionId
     : sections.length === 1
@@ -58,10 +68,18 @@ async function Wrapper({
         examId={exam.id}
         slug={exam.slug}
         title={exam.title}
-        bankName={exam.bank?.name ?? "Not selected"}
-        categoryName={exam.category?.name ?? "Not selected"}
-        bankId={exam.default_bank_id ?? ""}
-        categoryId={exam.default_category_id ?? ""}
+        bankName={
+          exam.bank?.name ?? "Not selected"
+        }
+        categoryName={
+          exam.category?.name ?? "Not selected"
+        }
+        bankId={
+          exam.default_bank_id ?? ""
+        }
+        categoryId={
+          exam.default_category_id ?? ""
+        }
         initialTopics={topics}
         initialSections={sections}
         initialSectionId={initialSectionId}

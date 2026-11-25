@@ -1,7 +1,7 @@
 
 import Link from "next/link"
 import type { ReactNode } from "react"
-import { ArrowLeft } from "lucide-react"
+import { ArrowLeft, ArrowUpRight } from "lucide-react"
 
 import { urls } from "@/constants"
 import { PageShell } from "@/components/layout/PageShell"
@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 
 import { getExamBySlug } from "@/features/exams/services/queries"
 import { ExamWorkspaceNav } from "@/features/exams/components/ExamWorkspaceNav"
+import { LinkButton } from "@/components/shared/LinkButton"
  
 type Props = {
   children: ReactNode
@@ -21,7 +22,7 @@ export default async function ExamLayout({
 }: Props) {
   const { id:slug } = await params
   const exam = await getExamBySlug(slug)
-
+console.log(exam)
   return (
     <PageShell className="space-y-6 max-w-7xl ">
       <header className="space-y-4">
@@ -42,6 +43,10 @@ export default async function ExamLayout({
             <Badge variant="secondary" className="capitalize">
               {exam.status}
             </Badge>
+
+            {/* <LinkButton href={"#"} variant={}>
+              Exam Link <ArrowUpRight size={16}/>
+            </LinkButton> */}
           </div>
 
           {exam.description && (

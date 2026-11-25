@@ -1,6 +1,7 @@
 
 import Link from "next/link"
 import { Suspense } from "react"
+
 import {
   ArrowLeft,
   ClipboardCheck,
@@ -19,6 +20,13 @@ import {
   getExamSetupOptions,
   getSchoolExamSetupOptions,
 } from "@/features/exams/services/action"
+
+// IMPORTANT:
+// This is a server-side query, not an examination action.
+// Import it from its actual module.
+import {
+  getSchoolAssessmentSetupOptions,
+} from "@/features/exams/services/queries.school-assessment-setup"
 
 const isSchool = true
 
@@ -58,7 +66,7 @@ export default function NewExamPage() {
 
             <p className="mt-1 text-sm text-foreground/75">
               {isSchool
-                ? "Set the academic details, choose a question bank and save your examination draft."
+                ? "Set the academic details, select assessment components, choose a question bank and save your examination draft."
                 : "Name your test, organize its questions and save a draft."}
             </p>
           </div>
@@ -72,21 +80,40 @@ export default function NewExamPage() {
   )
 }
 
+/**
+ * Load all setup options on the server.
+ *
+ * CBT options: question banks and topics.
+ * School options: sessions, terms, levels, classes, subjects.
+ * Assessment options: components belonging to subject offerings.
+ */
 async function Wrapper() {
-  const [cbt, school] = await Promise.all([
+  const [cbt, school, assessment] = await Promise.all([
     getExamSetupOptions(),
+
     isSchool
       ? getSchoolExamSetupOptions()
       : Promise.resolve(null),
+
+    isSchool
+      ? getSchoolAssessmentSetupOptions()
+      : Promise.resolve(null),
   ])
 
-  if (cbt.error || school?.error) {
+  // Do not silently treat failed assessment queries as
+  // an empty set of components.
+  if (
+    cbt.error ||
+    school?.error ||
+    assessment?.error
+  ) {
     return (
       <ErrorState
         header="Unable to load examination setup"
         text={
           cbt.error ||
           school?.error ||
+          assessment?.error ||
           "Please try again."
         }
       />
@@ -99,6 +126,9 @@ async function Wrapper() {
       categories={cbt.categories}
       isSchool={isSchool}
       schoolOptions={school?.options}
+      assessmentComponents={
+        assessment?.components ?? []
+      }
     />
   )
 }

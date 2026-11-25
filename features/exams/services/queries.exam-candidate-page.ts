@@ -60,6 +60,7 @@ export async function getExamCandidatesPage(slug: string, options: CandidateList
       publication: null,
       accessMode: null,
       publicLinkCode: null,
+      examEntryCode: null,
       candidates: [],
       assignments: [],
     }
@@ -83,7 +84,7 @@ export async function getExamCandidatesPage(slug: string, options: CandidateList
     },
     accessMode: mode as CandidateManagementData["accessMode"],
     publicLinkCode: mode === "open_link" ? policy?.entry_code ?? null : null,
-    candidates: [],
+    examEntryCode: policy?.entry_code ?? null,    candidates: [],
     assignments: [],
   }
 

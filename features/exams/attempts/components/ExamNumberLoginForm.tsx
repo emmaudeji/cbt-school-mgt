@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label"
 import {
   loginWithExamNumberAction,
   type ExamNumberLoginState,
-} from "../public/services/exam-number-login-action"
+} from "../../public/services/exam-number-login-action"
 
 export function ExamNumberLoginForm({ code }: { code: string }) {
   const [state, action, pending] = useActionState<ExamNumberLoginState, FormData>(

@@ -179,20 +179,6 @@ export function ExamSectionCard({
                 </p>
               </div>
 
-              {/* <div className="hidden shrink-0 gap-1.5 sm:flex">
-                {fixedCount > 0 && (
-                  <Badge className="bg-sky-500/10 text-sky-700 hover:bg-sky-500/10 dark:text-sky-300">
-                    {fixedCount} fixed
-                  </Badge>
-                )}
-                {randomCount > 0 && (
-                  <Badge className="bg-amber-500/10 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300">
-                    {randomCount} random
-                  </Badge>
-                )}
-              </div> */}
-
-              
             </div>
 
             <div className="flex items-center gap-2 ">

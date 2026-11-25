@@ -1,5 +1,5 @@
 "use server"
-
+import { autoSyncFinalizedAttempt } from "./auto-sync-result"
 import { getPublicExamClient } from "@/features/exams/services/public-exam-client"
 import { getAttemptTokenHash } from "@/features/exams/attempts/services/attempt-player"
 import { issueReviewReceipt } from "@/features/exams/results/services/review-receipt"
@@ -45,6 +45,10 @@ export async function submitExamAttemptAction(
         : "This attempt could not be submitted",
     }
   }
+
+  // Grading has already executed in the submission RPC.
+  // Import the student's finalized school result if eligible.
+  await autoSyncFinalizedAttempt(attemptId)
 
   // The grading trigger has already created the snapshot in the same SQL
   // transaction when grading is final. An independent HttpOnly receipt now

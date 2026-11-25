@@ -7,7 +7,7 @@ import { Loader2, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { joinPublicExamAction, JoinPublicExamState } from "../public/services/public-exam-access"
+import { joinPublicExamAction, JoinPublicExamState } from "../../public/services/public-exam-access"
 
  
 

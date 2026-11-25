@@ -36,9 +36,9 @@ export type ExamPlayerData = {
   questions: ExamQuestion[]
 }
 
-function isValidId(id: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
-}
+// function isValidId(id: string) {
+//   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+// }
 
 export async function getAttemptTokenHash(code: string) {
   const normalized = code.trim().toUpperCase()
@@ -59,7 +59,7 @@ export async function getPublicExamPlayer(
   code: string,
   attemptId: string
 ): Promise<ExamPlayerData | null> {
-  if (!isValidId(attemptId)) return null
+  // if (!isValidId(attemptId)) return null
 
   const tokenHash = await getAttemptTokenHash(code)
   if (!tokenHash) return null

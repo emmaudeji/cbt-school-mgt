@@ -98,9 +98,6 @@ export const getExamBySlug = cache(async (slug: string) => {
   } satisfies ExamData
 })
 
-
-
-
 export const getExamQuestions = cache(
   async (slug: string): Promise<GetExamQuestionsResult> => {
     const exam = await getExamBySlug(slug)
@@ -210,8 +207,6 @@ export const getExamQuestions = cache(
     }
   }
 )
-
-
 
 export async function getOrganizationSectionTemplates() {
   const context = await getStaffContext()
@@ -535,3 +530,221 @@ export async function getExamCorrectAnswers(
 
   return answers
 }
+
+export type SchoolExamSummary = {
+  sessionName: string
+  termName: string
+  levelName: string
+  subjectName: string
+  classNames: string[]
+  targetScope: "level" | "arms"
+  assignmentScope: "class" | "selected"
+}
+
+export const getSchoolExamSummary = cache(
+  async (
+    examId: string
+  ): Promise<SchoolExamSummary | null> => {
+    const context = await getStaffContext()
+
+    if (!context) {
+      throw new Error("Your session has expired.")
+    }
+
+    const db = context.supabase
+    const organizationId = context.organizationId
+
+    const { data: link, error: linkError } =
+      await db
+        .from("school_cbt_exam_contexts")
+        .select(
+          "id, offering_id, target_scope, assignment_scope"
+        )
+        .eq("organization_id", organizationId)
+        .eq("exam_id", examId)
+        .maybeSingle()
+
+    if (linkError) {
+      console.error(
+        "[CBT:SCHOOL_EXAM_CONTEXT]",
+        linkError
+      )
+
+      throw new Error(
+        "Unable to load school examination details."
+      )
+    }
+
+    // No academic context means this is an
+    // independent CBT test.
+    if (!link) return null
+
+    const { data: savedOfferings, error: linksError } =
+      await db
+        .from("school_cbt_exam_context_offerings")
+        .select("offering_id")
+        .eq("context_id", link.id)
+
+    if (linksError) {
+      console.error(
+        "[CBT:SCHOOL_EXAM_OFFERINGS]",
+        linksError
+      )
+
+      throw new Error(
+        "Unable to load examination class coverage."
+      )
+    }
+
+    // Compatibility with older, single-class exams.
+    const offeringIds = [
+      ...new Set(
+        (savedOfferings?.length
+          ? savedOfferings.map(
+              (item) => item.offering_id
+            )
+          : [link.offering_id]
+        ).filter(Boolean)
+      ),
+    ]
+
+    if (!offeringIds.length) {
+      throw new Error(
+        "This school exam has no class offering."
+      )
+    }
+
+    const { data: offerings, error: offeringError } =
+      await db
+        .from("school_subject_offerings")
+        .select(
+          "id, session_id, term_id, class_id, subject_id"
+        )
+        .eq("organization_id", organizationId)
+        .in("id", offeringIds)
+
+    if (
+      offeringError ||
+      !offerings ||
+      offerings.length !== offeringIds.length
+    ) {
+      console.error(
+        "[CBT:SCHOOL_OFFERING_DETAILS]",
+        offeringError
+      )
+
+      throw new Error(
+        "Some examination subject offerings are unavailable."
+      )
+    }
+
+    const first = offerings[0]
+
+    const classIds = [
+      ...new Set(
+        offerings.map((item) => item.class_id)
+      ),
+    ]
+
+    const [
+      sessionsResult,
+      termsResult,
+      subjectsResult,
+      classesResult,
+    ] = await Promise.all([
+      db
+        .from("school_academic_sessions")
+        .select("id, name")
+        .eq("organization_id", organizationId)
+        .eq("id", first.session_id)
+        .maybeSingle(),
+
+      db
+        .from("school_terms")
+        .select("id, name")
+        .eq("organization_id", organizationId)
+        .eq("id", first.term_id)
+        .maybeSingle(),
+
+      db
+        .from("school_subjects")
+        .select("id, name")
+        .eq("organization_id", organizationId)
+        .eq("id", first.subject_id)
+        .maybeSingle(),
+
+      db
+        .from("school_classes")
+        .select("id, name, level_id")
+        .eq("organization_id", organizationId)
+        .eq("session_id", first.session_id)
+        .in("id", classIds),
+    ])
+
+    if (
+      sessionsResult.error ||
+      termsResult.error ||
+      subjectsResult.error ||
+      classesResult.error
+    ) {
+      throw new Error(
+        "Unable to load school academic information."
+      )
+    }
+
+    const classes = classesResult.data ?? []
+
+    if (
+      !sessionsResult.data ||
+      !termsResult.data ||
+      !subjectsResult.data ||
+      classes.length !== classIds.length
+    ) {
+      throw new Error(
+        "School examination academic details are incomplete."
+      )
+    }
+
+    const levelId = classes[0]?.level_id
+
+    if (!levelId) {
+      throw new Error(
+        "Examination class level is missing."
+      )
+    }
+
+    const { data: level, error: levelError } =
+      await db
+        .from("school_class_levels")
+        .select("name")
+        .eq("organization_id", organizationId)
+        .eq("id", levelId)
+        .maybeSingle()
+
+    if (levelError || !level) {
+      throw new Error(
+        "Unable to identify the examination class level."
+      )
+    }
+
+    // The creation RPC guarantees consistent
+    // session, term, subject and level.
+    return {
+      sessionName: sessionsResult.data.name,
+      termName: termsResult.data.name,
+      levelName: level.name,
+      subjectName: subjectsResult.data.name,
+      classNames: classes
+        .map((item) => item.name)
+        .sort((a, b) => a.localeCompare(b)),
+      targetScope:
+        link.target_scope === "level"
+          ? "level"
+          : "arms",
+      assignmentScope:
+        link.assignment_scope === "selected"
+          ? "selected"
+          : "class",
+    }
+  }
+)

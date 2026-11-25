@@ -1,8 +1,8 @@
 import { notFound, redirect } from "next/navigation"
 
 import { getPublicExamPlayer } from "@/features/exams/attempts/services/attempt-player"
-import { ExamPlayer } from "@/features/exams/attempts/components/ExamPlayer"
 import { getCurrentExamSession } from "@/features/exams/public/services/exam-entry-access"
+import { ExamPlayer } from "@/features/exams/attempts/exam-player/ExamPlayer"
 
 export const dynamic = "force-dynamic"
 

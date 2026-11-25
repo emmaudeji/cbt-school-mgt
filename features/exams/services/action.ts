@@ -200,6 +200,52 @@ export async function getSchoolExamSetupOptions():
 }
 
 
+export type SchoolAssessmentSetupComponent = {
+  id: string
+  offering_id: string
+  name: string
+  maximum_score: number
+  weight_percent: number
+  position: number
+}
+
+export async function getSchoolAssessmentSetupOptions() {
+  const context = await getStaffContext()
+
+  if (!context) redirect(urls.login)
+
+  const { data, error } = await context.supabase
+    .from("school_assessment_components")
+    .select(`
+      id,
+      offering_id,
+      name,
+      maximum_score,
+      weight_percent,
+      position
+    `)
+    .eq("organization_id", context.organizationId)
+    .order("position")
+    .order("name")
+
+  if (error) {
+    console.error("[CBT:ASSESSMENT_SETUP_OPTIONS]", error)
+
+    return {
+      components: [] as SchoolAssessmentSetupComponent[],
+      error: "Unable to load school assessment components.",
+    }
+  }
+
+  return {
+    components:
+      (data ?? []) as SchoolAssessmentSetupComponent[],
+    error: null,
+  }
+}
+
+
+
 // 2. Create or reuse a question bank
 export async function createQuestionBankAction(
   name: string,
@@ -410,23 +456,150 @@ export type SchoolCreateExamState = {
   error: string | null
 }
 
-const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
 function read(data: FormData, key: string) {
   return String(data.get(key) ?? "").trim()
 }
 
+type AssessmentSelection = {
+  offeringId: string
+  componentId: string | null
+}
+
+/**
+ * Validate assessment selections submitted by NewExamForm.
+ *
+ * Browser values are not trusted. The database RPC will
+ * independently verify organization ownership and ensure
+ * each component belongs to the selected subject offering.
+ */
+function parseSchoolAssessmentSelections(
+  formData: FormData,
+  offeringIds: string[]
+):
+  | { ok: true; selections: AssessmentSelection[] }
+  | { ok: false; error: string } {
+  const raw = read(
+    formData,
+    "school_assessment_selections"
+  )
+
+  if (!raw) {
+    return {
+      ok: false,
+      error:
+        "Assessment setup is missing. Refresh the page and try again.",
+    }
+  }
+
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return {
+      ok: false,
+      error: "Invalid school assessment configuration.",
+    }
+  }
+
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== offeringIds.length
+  ) {
+    return {
+      ok: false,
+      error:
+        "Assessment setup must cover every selected class arm.",
+    }
+  }
+
+  const selectedOfferings = new Set(offeringIds)
+  const seen = new Set<string>()
+  const selections: AssessmentSelection[] = []
+
+  for (const item of parsed) {
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      Array.isArray(item)
+    ) {
+      return {
+        ok: false,
+        error: "Invalid assessment selection.",
+      }
+    }
+
+    const row = item as Record<string, unknown>
+    const offeringId = row.offeringId
+    const componentId = row.componentId
+
+    if (
+      typeof offeringId !== "string" ||
+      !selectedOfferings.has(offeringId) ||
+      seen.has(offeringId)
+    ) {
+      return {
+        ok: false,
+        error:
+          "Assessment configuration contains an invalid or duplicate class offering.",
+      }
+    }
+
+    if (
+      componentId !== null &&
+      (
+        typeof componentId !== "string"  
+      )
+    ) {
+      return {
+        ok: false,
+        error:
+          "Select a valid assessment component or leave it unconfigured.",
+      }
+    }
+
+    seen.add(offeringId)
+
+    selections.push({
+      offeringId,
+      componentId: componentId as string | null,
+    })
+  }
+
+  if (seen.size !== selectedOfferings.size) {
+    return {
+      ok: false,
+      error:
+        "Assessment setup does not match the selected class arms.",
+    }
+  }
+
+  return {
+    ok: true,
+    selections,
+  }
+}
+
+/**
+ * Create a school examination and persist its intended
+ * assessment destinations in one database transaction.
+ *
+ * This action does not publish the examination,
+ * assign candidates, or import school assessment marks.
+ */
 export async function createSchoolExamAction(
   previousState: SchoolCreateExamState,
   formData: FormData
 ): Promise<SchoolCreateExamState> {
   const context = await getStaffContext()
 
-  if (!context) redirect(urls.login)
+  if (!context) {
+    redirect(urls.login)
+  }
 
   const mode = read(formData, "exam_mode")
 
+  // Preserve the independent-test workflow.
   if (mode === "independent") {
     return createExamAction(previousState, formData)
   }
@@ -436,6 +609,10 @@ export async function createSchoolExamAction(
       error: "Select a valid examination type.",
     }
   }
+
+  // -----------------------------------------------
+  // 1. Read examination details.
+  // -----------------------------------------------
 
   const title = read(formData, "title")
   const description = read(formData, "description")
@@ -450,56 +627,93 @@ export async function createSchoolExamAction(
 
   const offeringIds = formData
     .getAll("school_offering_ids")
-    .map(String)
+    .map((value) => String(value).trim())
+
+  // -----------------------------------------------
+  // 2. Validate the existing creation fields.
+  // -----------------------------------------------
 
   if (title.length < 2 || title.length > 200) {
     return {
-      error: "Examination title must contain 2–200 characters.",
+      error:
+        "Examination title must contain 2–200 characters.",
     }
   }
 
   if (description.length > 1000) {
     return {
-      error: "Description cannot exceed 1,000 characters.",
+      error:
+        "Description cannot exceed 1,000 characters.",
     }
   }
 
-  if (!UUID.test(bankId) || !UUID.test(categoryId)) {
-    return {
-      error: "Choose a valid question bank and topic.",
-    }
-  }
 
   if (
     offeringIds.length < 1 ||
     offeringIds.length > 100 ||
-    !offeringIds.every((id) => UUID.test(id)) ||
+    
     new Set(offeringIds).size !== offeringIds.length
   ) {
     return {
-      error: "Select valid class arms with subject offerings.",
+      error:
+        "Select valid class arms with subject offerings.",
     }
   }
 
   if (!["level", "arms"].includes(targetScope)) {
     return {
-      error: "Choose entire-level or selected-arm coverage.",
+      error:
+        "Choose entire-level or selected-arm coverage.",
     }
   }
 
   if (!["class", "selected"].includes(assignmentScope)) {
     return {
-      error: "Choose a valid student assignment scope.",
+      error:
+        "Choose a valid student assignment scope.",
     }
   }
 
+  // -----------------------------------------------
+  // 3. Validate the new assessment configuration.
+  //
+  // A null component is allowed: that class arm will
+  // require assessment setup before importing results.
+  // -----------------------------------------------
+
+  const assessment = parseSchoolAssessmentSelections(
+    formData,
+    offeringIds
+  )
+
+  if (!assessment.ok) {
+    return {
+      error: assessment.error,
+    }
+  }
+
+  // -----------------------------------------------
+  // 4. Generate the examination slug.
+  // -----------------------------------------------
+
   const slug = [
-    toSlug(title).slice(0, 190).replace(/-+$/, ""),
+    toSlug(title)
+      .slice(0, 190)
+      .replace(/-+$/, ""),
     crypto.randomUUID().slice(0, 8),
   ].join("-")
 
+  // -----------------------------------------------
+  // 5. Create the examination and save assessment
+  // mappings atomically.
+  //
+  // This RPC is introduced in the SQL migration below.
+  // The existing school_create_cbt_exam_for_classes
+  // function remains unchanged.
+  // -----------------------------------------------
+
   const { data, error } = await context.supabase.rpc(
-    "school_create_cbt_exam_for_classes",
+    "school_create_cbt_exam_with_assessments",
     {
       p_title: title,
       p_description: description,
@@ -509,15 +723,19 @@ export async function createSchoolExamAction(
       p_offering_ids: offeringIds,
       p_target_scope: targetScope,
       p_assignment_scope: assignmentScope,
+      p_assessment_selections: assessment.selections,
     }
   )
 
   if (error) {
-    console.error("[SCHOOL:CREATE_MULTI_CLASS_EXAM]", {
-      organizationId: context.organizationId,
-      code: error.code,
-      message: error.message,
-    })
+    console.error(
+      "[SCHOOL:CREATE_EXAM_WITH_ASSESSMENTS]",
+      {
+        organizationId: context.organizationId,
+        code: error.code,
+        message: error.message,
+      }
+    )
 
     return {
       error:
@@ -530,9 +748,16 @@ export async function createSchoolExamAction(
 
   if (typeof data !== "string" || !data) {
     return {
-      error: "The new examination could not be confirmed.",
+      error:
+        "The new examination could not be confirmed.",
     }
   }
+
+  // -----------------------------------------------
+  // 6. Invalidate the list and navigate to the draft.
+  //
+  // Do not wrap redirect() in a generic try/catch.
+  // -----------------------------------------------
 
   revalidatePath(urls.exams)
   redirect(urls.examDetails(data))

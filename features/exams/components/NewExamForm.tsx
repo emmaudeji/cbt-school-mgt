@@ -11,6 +11,7 @@ import {
 
 import {
   ArrowRight,
+  ArrowUpRight,
   BookOpen,
   Check,
   ClipboardList,
@@ -20,7 +21,6 @@ import {
   Loader2,
   Users,
   UserRoundCheck,
-  ArrowUpRight,
 } from "lucide-react"
 
 import { toast } from "react-toastify"
@@ -36,15 +36,22 @@ import SelectOrCreateDropdown, {
   type SelectOption,
 } from "@/components/shared/SelectOrCreateDropdown"
 
+import CustomSelect from "@/components/shared/CustomSelect"
+import { LinkButton } from "@/components/shared/LinkButton"
+
 import {
   createCategoryAction,
   createExamAction,
   createQuestionBankAction,
   createSchoolExamAction,
-  SchoolExamSetupOptions,
+  SchoolAssessmentSetupComponent,
+  type SchoolExamSetupOptions,
 } from "../services/action"
-import CustomSelect from "@/components/shared/CustomSelect"
-import { LinkButton } from "@/components/shared/LinkButton"
+import { SchoolExamAssessmentSetup } from "./SchoolExamAssessmentSetup"
+
+ 
+
+ 
 
 type CategoryOption = SelectOption & {
   bank_id: string
@@ -55,6 +62,10 @@ type Props = {
   categories: CategoryOption[]
   isSchool: boolean
   schoolOptions?: SchoolExamSetupOptions
+
+  // Assessment components are loaded by the server page.
+  // Each component belongs to a specific subject offering.
+  assessmentComponents?: SchoolAssessmentSetupComponent[]
 }
 
 type ExamMode = "school" | "independent"
@@ -64,9 +75,6 @@ type AssignmentScope = "class" | "selected"
 const initialState = {
   error: null as string | null,
 }
-
-const selectClass =
-  "flex h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
 
 function SectionHeading({
   number,
@@ -119,7 +127,11 @@ export default function NewExamForm({
   categories,
   isSchool,
   schoolOptions,
+  assessmentComponents = [],
 }: Props) {
+  // Preserve the existing creation actions.
+  // The school action will later validate and persist
+  // school_assessment_selections.
   const action = isSchool
     ? createSchoolExamAction
     : createExamAction
@@ -127,10 +139,13 @@ export default function NewExamForm({
   const [state, formAction, pending] =
     useActionState(action, initialState)
 
-  const [examMode, setExamMode] =
-    useState<ExamMode>(
-      isSchool ? "school" : "independent"
-    )
+  // --------------------------------------------------
+  // 1. Examination type and general details
+  // --------------------------------------------------
+
+  const [examMode, setExamMode] = useState<ExamMode>(
+    isSchool ? "school" : "independent"
+  )
 
   const isSchoolExam =
     isSchool && examMode === "school"
@@ -149,6 +164,10 @@ export default function NewExamForm({
 
   const [assignmentScope, setAssignmentScope] =
     useState<AssignmentScope>("class")
+
+  // --------------------------------------------------
+  // 2. School academic setup
+  // --------------------------------------------------
 
   const [targetScope, setTargetScope] =
     useState<TargetScope>("level")
@@ -175,6 +194,10 @@ export default function NewExamForm({
   const [levelId, setLevelId] = useState("")
   const [subjectId, setSubjectId] = useState("")
 
+  // --------------------------------------------------
+  // 3. Question-bank and topic options
+  // --------------------------------------------------
+
   const availableCategories = useMemo(
     () =>
       categoryOptions.filter(
@@ -182,6 +205,10 @@ export default function NewExamForm({
       ),
     [categoryOptions, bankId]
   )
+
+  // --------------------------------------------------
+  // 4. Resolve the academic structure
+  // --------------------------------------------------
 
   const availableTerms = useMemo(
     () =>
@@ -274,6 +301,14 @@ export default function NewExamForm({
     [levelOfferings, validSubjectId]
   )
 
+  // --------------------------------------------------
+  // 5. Class coverage
+  //
+  // Selected classes determine the initial examination
+  // scope. They must not restrict later assignment of
+  // individual students from other school classes.
+  // --------------------------------------------------
+
   const eligibleClassIds = useMemo(
     () =>
       new Set(
@@ -302,6 +337,8 @@ export default function NewExamForm({
     actualSelectedClassIds
   )
 
+  // These exact offering IDs are also used to resolve
+  // the assessment component for each class arm.
   const selectedOfferingIds = subjectOfferings
     .filter(
       (item) =>
@@ -329,11 +366,19 @@ export default function NewExamForm({
       allArmsCovered
     )
 
+  // --------------------------------------------------
+  // 6. Server action feedback
+  // --------------------------------------------------
+
   useEffect(() => {
     if (state.error) {
       toast.error(state.error)
     }
   }, [state])
+
+  // --------------------------------------------------
+  // 7. Academic selection handlers
+  // --------------------------------------------------
 
   function resetCoverage() {
     setLevelId("")
@@ -378,8 +423,13 @@ export default function NewExamForm({
     )
   }
 
+  // --------------------------------------------------
+  // 8. Question-bank and topic handlers
+  // --------------------------------------------------
+
   function changeBank(value: string) {
     if (value === bankId) return
+
     setBankId(value)
     setCategoryId("")
   }
@@ -416,6 +466,13 @@ export default function NewExamForm({
     })
   }
 
+  // --------------------------------------------------
+  // 9. Form validation
+  //
+  // Missing assessment components do not prevent
+  // saving an examination draft.
+  // --------------------------------------------------
+
   const canSubmit =
     !pending &&
     title.trim().length >= 2 &&
@@ -430,6 +487,8 @@ export default function NewExamForm({
 
   return (
     <form action={formAction}>
+      {/* Examination mode is retained for the existing
+          school creation action. */}
       {isSchool && (
         <input
           type="hidden"
@@ -438,6 +497,8 @@ export default function NewExamForm({
         />
       )}
 
+      {/* Persist selected offering IDs through the
+          existing creation workflow. */}
       {isSchoolExam && (
         <>
           <input
@@ -446,21 +507,21 @@ export default function NewExamForm({
             value={targetScope}
           />
 
-          {selectedOfferingIds.map(
-            (id) => (
-              <input
-                key={id}
-                type="hidden"
-                name="school_offering_ids"
-                value={id}
-              />
-            )
-          )}
+          {selectedOfferingIds.map((id) => (
+            <input
+              key={id}
+              type="hidden"
+              name="school_offering_ids"
+              value={id}
+            />
+          ))}
         </>
       )}
 
       <div className="overflow-hidden rounded-xl border bg-card">
-        {/* HEADER */}
+        {/* ==========================================
+            FORM HEADER
+        ========================================== */}
         <div className="flex items-center justify-between gap-3 border-b bg-primary/5 px-4 py-3 sm:px-5">
           <div className="flex items-center gap-2">
             <ClipboardList className="size-4 text-primary" />
@@ -478,11 +539,14 @@ export default function NewExamForm({
         </div>
 
         <div className="space-y-5 p-4 sm:p-5">
-          {/* EXAMINATION TYPE */}
+          {/* ==========================================
+              EXAMINATION TYPE
+          ========================================== */}
           {isSchool && (
             <section className="space-y-2">
               <div className="flex items-center gap-2">
                 <Layers3 className="size-4 text-primary" />
+
                 <h2 className="text-sm font-bold">
                   Examination Type
                 </h2>
@@ -550,7 +614,9 @@ export default function NewExamForm({
             </section>
           )}
 
-          {/* SCHOOL ACADEMIC DETAILS */}
+          {/* ==========================================
+              STEP 1: SCHOOL ACADEMIC DETAILS
+          ========================================== */}
           {isSchoolExam && (
             <section className="space-y-3">
               <SectionHeading
@@ -571,9 +637,17 @@ export default function NewExamForm({
                     disabled={pending}
                     required
                     options={[
-                      { label: "Select session", value: "" },
+                      {
+                        label: "Select session",
+                        value: "",
+                      },
                       ...sessions.map((session) => ({
-                        label: `${session.name}${session.is_current ? " (Current)" : ""}`,
+                        label:
+                          `${session.name}${
+                            session.is_current
+                              ? " (Current)"
+                              : ""
+                          }`,
                         value: session.id,
                       })),
                     ]}
@@ -587,9 +661,17 @@ export default function NewExamForm({
                     disabled={pending || !sessionId}
                     required
                     options={[
-                      { label: "Select term", value: "" },
+                      {
+                        label: "Select term",
+                        value: "",
+                      },
                       ...availableTerms.map((term) => ({
-                        label: `${term.name}${term.is_current ? " (Current)" : ""}`,
+                        label:
+                          `${term.name}${
+                            term.is_current
+                              ? " (Current)"
+                              : ""
+                          }`,
                         value: term.id,
                       })),
                     ]}
@@ -600,10 +682,15 @@ export default function NewExamForm({
                     name="school-level"
                     value={levelId}
                     onChange={changeLevel}
-                    disabled={pending || !resolvedTermId}
+                    disabled={
+                      pending || !resolvedTermId
+                    }
                     required
                     options={[
-                      { label: "Select level", value: "" },
+                      {
+                        label: "Select level",
+                        value: "",
+                      },
                       ...availableLevels.map((level) => ({
                         label: level.name,
                         value: level.id,
@@ -617,22 +704,31 @@ export default function NewExamForm({
                       name="school-subject"
                       value={validSubjectId}
                       onChange={changeSubject}
-                      disabled={pending || !levelId}
+                      disabled={
+                        pending || !levelId
+                      }
                       required
                       options={[
-                        { label: "Select subject", value: "" },
-                        ...availableSubjects.map((subject) => ({
-                          label: subject.name,
-                          value: subject.id,
-                        })),
+                        {
+                          label: "Select subject",
+                          value: "",
+                        },
+                        ...availableSubjects.map(
+                          (subject) => ({
+                            label: subject.name,
+                            value: subject.id,
+                          })
+                        ),
                       ]}
                     />
 
-                    {levelId && availableSubjects.length === 0 && (
-                      <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-                        No subject offerings are configured for this level and term.
-                      </p>
-                    )}
+                    {levelId &&
+                      availableSubjects.length === 0 && (
+                        <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                          No subject offerings are configured
+                          for this level and term.
+                        </p>
+                      )}
                   </div>
                 </div>
 
@@ -643,8 +739,10 @@ export default function NewExamForm({
                       <p className="text-sm font-bold">
                         Class Coverage
                       </p>
+
                       <p className="mt-0.5 text-xs text-foreground/75">
-                        Choose all class arms or only specific arms.
+                        Choose all class arms or only
+                        specific arms.
                       </p>
                     </div>
 
@@ -666,6 +764,7 @@ export default function NewExamForm({
                       >
                         <div className="flex items-center gap-2">
                           <Users className="size-4 text-blue-600" />
+
                           <span className="text-sm font-semibold">
                             Entire Level
                           </span>
@@ -693,6 +792,7 @@ export default function NewExamForm({
                       >
                         <div className="flex items-center gap-2">
                           <UserRoundCheck className="size-4 text-violet-600" />
+
                           <span className="text-sm font-semibold">
                             Selected Arms
                           </span>
@@ -723,6 +823,7 @@ export default function NewExamForm({
                               }`}
                             >
                               {cls.name}
+
                               {!eligibleClassIds.has(cls.id)
                                 ? " · Not offered"
                                 : ""}
@@ -785,8 +886,12 @@ export default function NewExamForm({
                                 }`}
                               >
                                 <Checkbox
-                                  checked={checked && eligible}
-                                  disabled={pending || !eligible}
+                                  checked={
+                                    checked && eligible
+                                  }
+                                  disabled={
+                                    pending || !eligible
+                                  }
                                   onCheckedChange={(value) =>
                                     toggleClass(
                                       cls.id,
@@ -808,10 +913,10 @@ export default function NewExamForm({
                         </div>
 
                         <p className="mt-2 text-xs text-foreground/75">
-                          {actualSelectedClassIds.length} arm(s)
+                          {actualSelectedClassIds.length}{" "}
+                          arm(s) selected. Unconfigured
+                          subject offerings cannot be
                           selected.
-                          {" "}Unconfigured subject offerings
-                          cannot be selected.
                         </p>
                       </div>
                     )}
@@ -831,8 +936,13 @@ export default function NewExamForm({
                     )}
 
                     <div className="flex justify-end">
-                      <LinkButton href={urls.schoolAcademicSetup} size={"sm"} variant={"link"}>
-                        Update Academic setup <ArrowUpRight size={16}/>
+                      <LinkButton
+                        href={urls.schoolAcademicSetup}
+                        size="sm"
+                        variant="link"
+                      >
+                        Update Academic setup
+                        <ArrowUpRight size={16} />
                       </LinkButton>
                     </div>
                   </div>
@@ -841,10 +951,36 @@ export default function NewExamForm({
             </section>
           )}
 
-          {/* EXAM DETAILS */}
+          {/* ==========================================
+              STEP 2: SCHOOL ASSESSMENT SETUP
+
+              Each selected subject offering has its
+              own assessment component.
+
+              This component submits the selected
+              mappings as:
+              school_assessment_selections
+
+              The creation action must validate and
+              persist those mappings separately.
+          ========================================== */}
+          {isSchoolExam && canUseSchoolCoverage && (
+            <SchoolExamAssessmentSetup
+              selectedOfferingIds={selectedOfferingIds}
+              offerings={offerings}
+              classes={classes}
+              components={assessmentComponents}
+              disabled={pending}
+            />
+          )}
+
+          {/* ==========================================
+              STEP 3: EXAMINATION DETAILS
+              STEP 1: INDEPENDENT TEST DETAILS
+          ========================================== */}
           <section className="space-y-3">
             <SectionHeading
-              number={isSchoolExam ? 2 : 1}
+              number={isSchoolExam ? 3 : 1}
               icon={ClipboardList}
               title={
                 isSchoolExam
@@ -867,7 +1003,8 @@ export default function NewExamForm({
                 >
                   {isSchoolExam
                     ? "Examination Title"
-                    : "Test Title"} *
+                    : "Test Title"}{" "}
+                  *
                 </Label>
 
                 <Input
@@ -890,6 +1027,7 @@ export default function NewExamForm({
                 />
               </div>
 
+              {/* School candidate assignment defaults */}
               {isSchoolExam && (
                 <fieldset className="space-y-2">
                   <legend className="text-xs font-semibold">
@@ -908,7 +1046,9 @@ export default function NewExamForm({
                         type="radio"
                         name="assignment_scope"
                         value="class"
-                        checked={assignmentScope === "class"}
+                        checked={
+                          assignmentScope === "class"
+                        }
                         onChange={() =>
                           setAssignmentScope("class")
                         }
@@ -991,10 +1131,13 @@ export default function NewExamForm({
             </div>
           </section>
 
-          {/* QUESTION ORGANIZATION */}
+          {/* ==========================================
+              STEP 4: QUESTION ORGANIZATION
+              STEP 2: INDEPENDENT TEST QUESTIONS
+          ========================================== */}
           <section className="space-y-3">
             <SectionHeading
-              number={isSchoolExam ? 3 : 2}
+              number={isSchoolExam ? 4 : 2}
               icon={BookOpen}
               title="Question Organization"
               description="Choose the bank and topic for examination questions."
@@ -1034,7 +1177,10 @@ export default function NewExamForm({
                   options={availableCategories}
                   onChange={setCategoryId}
                   onCreate={(name) =>
-                    createCategoryAction(bankId, name)
+                    createCategoryAction(
+                      bankId,
+                      name
+                    )
                   }
                   onCreated={addCategory}
                   required
@@ -1044,6 +1190,9 @@ export default function NewExamForm({
             </div>
           </section>
 
+          {/* ==========================================
+              NEXT STEP INFORMATION
+          ========================================== */}
           <div className="flex items-start gap-2 rounded-lg border border-sky-500/25 bg-sky-500/5 p-3">
             <Info className="mt-0.5 size-4 shrink-0 text-sky-600" />
 
@@ -1061,6 +1210,7 @@ export default function NewExamForm({
             </p>
           </div>
 
+          {/* Server action validation message */}
           {state.error && (
             <div
               role="alert"
@@ -1071,7 +1221,9 @@ export default function NewExamForm({
           )}
         </div>
 
-        {/* ACTIONS */}
+        {/* ==========================================
+            FORM ACTIONS
+        ========================================== */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-muted/20 px-4 py-4 sm:px-5">
           <Button
             type="button"
@@ -1096,9 +1248,11 @@ export default function NewExamForm({
               </>
             ) : (
               <>
-                Save {isSchoolExam
+                Save{" "}
+                {isSchoolExam
                   ? "Examination"
-                  : "Test"} Draft
+                  : "Test"}{" "}
+                Draft
 
                 <ArrowRight className="size-4" />
               </>

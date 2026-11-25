@@ -87,3 +87,7 @@ export function useOrgStore<T>(
 
   return useStore(store, selector)
 }
+
+export function useOrgProviderAvailable(): boolean {
+  return useContext(OrgStoreContext) !== null
+}

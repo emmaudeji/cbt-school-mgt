@@ -170,8 +170,7 @@ export const urls = {
   // Candidate management
   candidates: "/candidates",
   candidatesImport: "/candidates/import",
-  candidateDetails: (id: string) =>
-    `/candidates/${encodeURIComponent(id)}`,
+  candidateDetails: (id: string) => `/candidates/${encodeURIComponent(id)}`,
 
   // Results and reporting
   results: "/results",
@@ -209,11 +208,9 @@ export const urls = {
   myResults: "/my-results",
 
   // Examination-taking (access-code, open-link, registered)
-  takeExam: (attemptId: string) =>
-    `/take/${encodeURIComponent(attemptId)}`,
+  takeExam: (examCode: string) => `/take/${encodeURIComponent(examCode)}`,
 
-  submitExam: (attemptId: string) =>
-    `/take/${encodeURIComponent(attemptId)}/submit`,
+  submitExam: (attemptId: string) => `/take/${encodeURIComponent(attemptId)}/submit`,
 
   // School-only CBT conveniences
   school: "/school",

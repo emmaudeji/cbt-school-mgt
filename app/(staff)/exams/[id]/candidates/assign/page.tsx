@@ -19,6 +19,7 @@ export default function SchoolAssignmentPage({ params }: Props) {
 async function Wrapper({ params }: Props) {
   const { id: slug } = await params
   const data = await getExamAssignmentContext(slug)
+  console.log(data)
   if (!data.exam) notFound()
 
   // Never fetch the summary without a sealed publication.

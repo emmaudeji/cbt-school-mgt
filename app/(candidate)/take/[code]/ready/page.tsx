@@ -99,17 +99,8 @@ export default async function ExamReadyPage({ params }: Props) {
             </p>
           </div>
 
-          {/* Start examination */}
-          <div className="space-y-4">
-            <p className="text-sm font-medium leading-6 text-foreground">
-              If the name is correct, select
-              <strong> Start Examination </strong>
-              when you are ready. Your examination timer
-              will begin once the examination starts.
-            </p>
-
-            <StartExamButton code={code} />
-          </div>
+           <StartExamButton code={code} />
+ 
 
         </CardContent>
       </Card>

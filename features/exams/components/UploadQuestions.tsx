@@ -2,45 +2,74 @@
 "use client"
 
 import Link from "next/link"
-import { useRef, useState, useTransition } from "react"
+import {
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react"
+
 import { useRouter } from "next/navigation"
+import { toast } from "react-toastify"
+
 import {
   AlertCircle,
   ArrowLeft,
+  BookOpen,
   CheckCircle2,
   ClipboardPaste,
+  Copy,
+  Download,
+  FileCheck2,
   FileText,
+  FileUp,
+  Info,
+  Layers3,
   Loader2,
   RotateCcw,
+  Save,
   Upload,
 } from "lucide-react"
-import { toast } from "react-toastify"
 
 import { urls } from "@/constants"
-import { useOrgStore } from "@/store/org-store"
+
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
+
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
-import { ConfirmActionDialog } from "@/components/shared/ConfirmActionDialog"
-import { LinkButton } from "@/components/shared/LinkButton"
-import SelectOrCreateDropdown from "@/components/shared/SelectOrCreateDropdown"
+import SelectOrCreateDropdown from
+  "@/components/shared/SelectOrCreateDropdown"
 
-import type { ImportOption } from "@/types/question-import"
+import { RichTextEditor } from
+  "@/components/shared/RichTextEditor"
 
-import { useQuestionImport } from "../context/QuestionImportProvider"
-import { getImportIssues } from "../services/import-validation"
+import type {
+  ImportOption,
+} from "@/types/question-import"
+
+import {
+  useQuestionImport,
+} from "../context/QuestionImportProvider"
+
+import {
+  getImportIssues,
+} from "../services/import-validation"
+
 import {
   extractQuestionsAction,
   saveImportedQuestionsAction,
 } from "../services/action"
+
 import {
   addExistingExamSectionAction,
   createExamSectionAction,
@@ -48,10 +77,17 @@ import {
   useOrganizationTopicAction,
 } from "../services/action.examSections"
 
-import { ImportedQuestionList } from "./ImportedQuestionList"
-import { getImportCatalogOptionsAction } from "../services/action.importCatalog"
-import { RichTextEditor } from "@/components/shared/RichTextEditor"
-import { richTextToQuestionText } from "../services/rich-text-to-questions"
+import {
+  getImportCatalogOptionsAction,
+} from "../services/action.importCatalog"
+
+import {
+  richTextToQuestionText,
+} from "../services/rich-text-to-questions"
+
+import {
+  ImportedQuestionList,
+} from "./ImportedQuestionList"
 
 type Props = {
   examId: string
@@ -71,32 +107,25 @@ type Props = {
   editable: boolean
 }
 
-type Source = "document" | "paste"
+type Source = "paste" | "document"
+
+type Confirmation = "replace" | "discard" | null
 
 type CatalogOption = {
   id: string
   name: string
 }
 
-function addOption(
-  current: ImportOption[],
-  option: ImportOption
-): ImportOption[] {
-  if (current.some(item => item.id === option.id)) {
-    return current
-  }
+const MAX_FILE_SIZE = 5 * 1024 * 1024
+const MAX_BATCH_SIZE = 100
 
-  return [...current, option].sort((a, b) =>
-    a.name.localeCompare(b.name)
-  )
-}
-
-const sample = `1. What is 12 × 5?
+const SAMPLE_QUESTIONS = `1. What is 12 × 5?
 A. 50
 B. 55
 C. 60
 D. 65
 Answer: C
+Explanation: 12 multiplied by 5 equals 60.
 
 2. What is the capital of Nigeria?
 A. Lagos
@@ -104,6 +133,58 @@ B. Abuja
 C. Kano
 D. Ibadan
 Answer: B`
+
+function addOption(
+  current: ImportOption[],
+  option: ImportOption
+): ImportOption[] {
+  if (
+    current.some(
+      (item) => item.id === option.id
+    )
+  ) {
+    return current
+  }
+
+  return [...current, option].sort(
+    (a, b) => a.name.localeCompare(b.name)
+  )
+}
+
+function SummaryStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: number
+  tone: "blue" | "green" | "amber" | "violet"
+}) {
+  const colors = {
+    blue:
+      "border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-300",
+    green:
+      "border-emerald-500/25 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300",
+    amber:
+      "border-amber-500/25 bg-amber-500/10 text-amber-800 dark:text-amber-300",
+    violet:
+      "border-violet-500/25 bg-violet-500/10 text-violet-800 dark:text-violet-300",
+  }
+
+  return (
+    <div
+      className={`rounded-lg border px-3 py-2 ${colors[tone]}`}
+    >
+      <p className="text-[11px] font-semibold">
+        {label}
+      </p>
+
+      <p className="mt-0.5 text-xl font-bold tabular-nums">
+        {value}
+      </p>
+    </div>
+  )
+}
 
 export function UploadQuestions({
   examId,
@@ -119,11 +200,9 @@ export function UploadQuestions({
   editable,
 }: Props) {
   const router = useRouter()
-  const fileInput = useRef<HTMLInputElement>(null)
 
-  const isSchool = useOrgStore(
-    state => state.organization.type === "school"
-  )
+  const fileInput =
+    useRef<HTMLInputElement>(null)
 
   const {
     questions,
@@ -137,87 +216,174 @@ export function UploadQuestions({
   const [source, setSource] =
     useState<Source>("paste")
 
-  const [file, setFile] = useState<File | null>(null)
-  const [pastedText, setPastedText] = useState("")
-  const [error, setError] = useState("")
-  const [extractionWarnings, setExtractionWarnings] =
-    useState<string[]>([])
+  const [file, setFile] =
+    useState<File | null>(null)
 
-  const [extracting, startExtraction] = useTransition()
-  const [saving, setSaving] = useState(false)
+  const [pastedText, setPastedText] =
+    useState("")
 
-  const [confirmation, setConfirmation] =
-    useState<"replace" | "discard" | null>(null)
+  const [error, setError] =
+    useState("")
 
-  const [sections, setSections] = useState<ImportOption[]>(
-    initialSections.map(section => ({
-      id: section.id,
-      name: section.title,
-    }))
-  )
+  const [
+    extractionWarnings,
+    setExtractionWarnings,
+  ] = useState<string[]>([])
+
+  const [
+    extracting,
+    startExtraction,
+  ] = useTransition()
+
+  const [saving, setSaving] =
+    useState(false)
+
+  const [
+    confirmation,
+    setConfirmation,
+  ] = useState<Confirmation>(null)
+
+  const [sections, setSections] =
+    useState<ImportOption[]>(
+      initialSections.map((section) => ({
+        id: section.id,
+        name: section.title,
+      }))
+    )
 
   const [topics, setTopics] =
     useState<ImportOption[]>(initialTopics)
 
-  const [defaultSectionId, setDefaultSectionId] =
-    useState(initialSectionId)
+  const [
+    defaultSectionId,
+    setDefaultSectionId,
+  ] = useState(initialSectionId)
 
-  const [defaultTopicId, setDefaultTopicId] =
-    useState("")
+  const [
+    defaultTopicId,
+    setDefaultTopicId,
+  ] = useState("")
 
-  const [organizationSections, setOrganizationSections] =
-    useState<CatalogOption[]>([])
+  const [
+    organizationSections,
+    setOrganizationSections,
+  ] = useState<CatalogOption[]>([])
 
-  const [organizationTopics, setOrganizationTopics] =
-    useState<CatalogOption[]>([])
+  const [
+    organizationTopics,
+    setOrganizationTopics,
+  ] = useState<CatalogOption[]>([])
 
-  const [catalogLoaded, setCatalogLoaded] =
+  const [
+    catalogLoaded,
+    setCatalogLoaded,
+  ] = useState(false)
+
+  const [
+    catalogLoading,
+    setCatalogLoading,
+  ] = useState(false)
+
+  const [templateBusy, setTemplateBusy] =
     useState(false)
 
-  const unsavedQuestions = questions.filter(
-    question => !question.saved
+  const busy =
+    extracting || saving || templateBusy
+
+  const unsavedQuestions = useMemo(
+    () =>
+      questions.filter(
+        (question) => !question.saved
+      ),
+    [questions]
   )
 
-  const readyToSave = unsavedQuestions.filter(
-    question => getImportIssues(question).length === 0
+  const readyToSave = useMemo(
+    () =>
+      unsavedQuestions.filter(
+        (question) =>
+          getImportIssues(question).length === 0
+      ),
+    [unsavedQuestions]
   )
 
-  const needsReview = unsavedQuestions.filter(
-    question => getImportIssues(question).length > 0
+  const needsReview = useMemo(
+    () =>
+      unsavedQuestions.filter(
+        (question) =>
+          getImportIssues(question).length > 0
+      ),
+    [unsavedQuestions]
   )
 
   const savedCount =
     questions.length - unsavedQuestions.length
 
-  const busy = extracting || saving
+  const savingCount = Math.min(
+    readyToSave.length,
+    MAX_BATCH_SIZE
+  )
 
-  // Load reusable catalogs when needed.
-  // Uses a server action rather than directly
-  // exposing organization-wide database access.
-  const loadCatalogs = async () => {
-    if (catalogLoaded) return
+  const canExtract =
+    editable &&
+    ready &&
+    !busy &&
+    (
+      source === "document"
+        ? file !== null
+        : pastedText.trim().length > 0
+    )
+
+  const hasDefaults =
+    Boolean(bankId) &&
+    Boolean(categoryId)
+
+  async function loadCatalogs() {
+    if (
+      catalogLoaded ||
+      catalogLoading
+    ) {
+      return
+    }
+
+    setCatalogLoading(true)
 
     try {
+      const result =
+        await getImportCatalogOptionsAction()
 
-
-      const result = await getImportCatalogOptionsAction()
-
-      if (result.success) {
-        setOrganizationSections(result.sections)
-        setOrganizationTopics(result.topics)
-        setCatalogLoaded(true)
-      } else {
+      if (!result.success) {
         toast.error(
-          result.error ?? "Unable to load reusable options."
+          result.error ??
+            "Unable to load reusable sections and topics."
         )
+        return
       }
-    } catch (error) {
-      console.error("[CBT:IMPORT_CATALOGS]", error)
-      toast.error("Unable to load reusable options.")
+
+      setOrganizationSections(
+        result.sections
+      )
+
+      setOrganizationTopics(
+        result.topics
+      )
+
+      setCatalogLoaded(true)
+    } catch (cause) {
+      console.error(
+        "[CBT:IMPORT_CATALOGS]",
+        cause
+      )
+
+      toast.error(
+        "Unable to load reusable options."
+      )
+    } finally {
+      setCatalogLoading(false)
     }
   }
 
-  const clearFile = () => {
+  function clearFile() {
     setFile(null)
     setError("")
 
@@ -226,11 +392,31 @@ export function UploadQuestions({
     }
   }
 
-  const createPastedDocument = async (
-    text: string
-  ): Promise<File> => {
-    const { Document, Packer, Paragraph } =
-      await import("docx")
+  async function copyTemplate() {
+    try {
+      await navigator.clipboard.writeText(
+        SAMPLE_QUESTIONS
+      )
+
+      toast.success(
+        "Question format copied."
+      )
+    } catch {
+      toast.error(
+        "Unable to copy the question format."
+      )
+    }
+  }
+
+  async function createWordFile(
+    text: string,
+    filename: string
+  ): Promise<File> {
+    const {
+      Document,
+      Packer,
+      Paragraph,
+    } = await import("docx")
 
     const lines = text
       .replace(/\r\n?/g, "\n")
@@ -241,153 +427,223 @@ export function UploadQuestions({
         {
           properties: {},
           children: lines.map(
-            line => new Paragraph({
-              text: line || " ",
-            })
+            (line) =>
+              new Paragraph({
+                text: line || " ",
+              })
           ),
         },
       ],
     })
 
-    const blob = await Packer.toBlob(document)
+    const blob =
+      await Packer.toBlob(document)
 
     return new File(
       [blob],
-      "pasted-questions.docx",
+      filename,
       {
-        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        type:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       }
     )
   }
 
+  async function downloadTemplate() {
+    if (templateBusy) return
 
-const performExtract = () => {
-  if (busy || !editable || !ready) return
+    setTemplateBusy(true)
 
-  setError("")
-
-  startExtraction(async () => {
     try {
-      let documentFile: File
-
-      if (source === "document") {
-        if (!file) {
-          setError("Choose a Word document.")
-          return
-        }
-
-        if (!file.name.toLowerCase().endsWith(".docx")) {
-          setError("Only .docx files are supported.")
-          return
-        }
-
-        documentFile = file
-      } else {
-        // ReactQuill returns HTML.
-        // Convert it before creating the Word document.
-        const plainText = richTextToQuestionText(pastedText)
-
-        if (plainText.length < 20) {
-          setError(
-            "Paste complete questions, answer choices and correct answers."
-          )
-          return
-        }
-
-        if (plainText.length > 100_000) {
-          setError(
-            "Please import smaller batches of questions."
-          )
-          return
-        }
-
-        // Debug the actual content being submitted.
-        console.debug(
-          "[CBT:PASTED_QUESTION_TEXT]",
-          plainText.slice(0, 1500)
+      const templateFile =
+        await createWordFile(
+          SAMPLE_QUESTIONS,
+          "CBT-Question-Import-Template.docx"
         )
 
-        documentFile =
-          await createPastedDocument(plainText)
-      }
+      const url =
+        URL.createObjectURL(templateFile)
 
-      if (
-        documentFile.size === 0 ||
-        documentFile.size > 5 * 1024 * 1024
-      ) {
-        setError("Document must not exceed 5 MB.")
-        return
-      }
+      const anchor =
+        document.createElement("a")
 
-      const formData = new FormData()
-      formData.set("file", documentFile)
+      anchor.href = url
+      anchor.download = templateFile.name
 
-      const response = await extractQuestionsAction(
-        slug,
-        formData
-      )
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
 
-      if (!response.success) {
-        const message =
-          response.error ??
-          "Unable to extract questions."
-
-        setError(message)
-        toast.error(message)
-        return
-      }
-
-      if (response.questions.length === 0) {
-        setError(
-          "No questions were recognized. Use numbered questions with A–D options and an Answer line."
-        )
-        return
-      }
-
-      setExtracted(response.questions, {
-        sectionId: defaultSectionId,
-        topicId: defaultTopicId,
-      })
-
-      setExtractionWarnings(
-        response.warnings ?? []
-      )
+      // Revoke after the download has been
+      // initiated, not before the anchor click.
+      window.setTimeout(() => {
+        URL.revokeObjectURL(url)
+      }, 1000)
 
       toast.success(
-        `${response.questions.length} questions extracted. Review them below.`
+        "Word question template prepared."
       )
     } catch (cause) {
       console.error(
-        "[CBT:EXTRACT_QUESTIONS]",
+        "[CBT:WORD_TEMPLATE]",
         cause
       )
 
-      setError(
-        "Unable to process the questions. Please try again."
+      toast.error(
+        "Unable to generate the Word template."
       )
-      toast.error("Question extraction failed.")
+    } finally {
+      setTemplateBusy(false)
     }
-  })
-}
+  }
 
-
-  const extract = () => {
-    if (!ready || busy || !editable) return
-
-    if (source === "document" && !file) {
-      setError("Choose a Word document.")
+  function performExtract() {
+    if (
+      busy ||
+      !editable ||
+      !ready
+    ) {
       return
     }
+
+    setError("")
+    setExtractionWarnings([])
+
+    startExtraction(async () => {
+      try {
+        let documentFile: File
+
+        if (source === "document") {
+          if (!file) {
+            setError(
+              "Choose a Word document."
+            )
+            return
+          }
+
+          if (
+            !file.name
+              .toLowerCase()
+              .endsWith(".docx")
+          ) {
+            setError(
+              "Only .docx documents are supported."
+            )
+            return
+          }
+
+          documentFile = file
+        } else {
+          const plainText =
+            richTextToQuestionText(
+              pastedText
+            )
+
+          if (
+            plainText.trim().length < 20
+          ) {
+            setError(
+              "Paste complete questions with options A–D and an Answer line."
+            )
+            return
+          }
+
+          if (
+            plainText.length > 100_000
+          ) {
+            setError(
+              "The pasted content is too long. Import a smaller batch."
+            )
+            return
+          }
+
+          documentFile =
+            await createWordFile(
+              plainText,
+              "pasted-questions.docx"
+            )
+        }
+
+        if (
+          documentFile.size === 0 ||
+          documentFile.size > MAX_FILE_SIZE
+        ) {
+          setError(
+            "The Word document must not exceed 5 MB."
+          )
+          return
+        }
+
+        const formData =
+          new FormData()
+
+        formData.set(
+          "file",
+          documentFile
+        )
+
+        const result =
+          await extractQuestionsAction(
+            slug,
+            formData
+          )
+
+        if (!result.success) {
+          const message =
+            result.error ??
+            "Unable to extract questions."
+
+          setError(message)
+          toast.error(message)
+          return
+        }
+
+        if (
+          result.questions.length === 0
+        ) {
+          setError(
+            "No questions were recognized. Check the numbering, A–D options and answer lines."
+          )
+          return
+        }
+
+        // Replaces only unsaved import items.
+        // Existing saved records are preserved.
+        setExtracted(result.questions, {
+          sectionId: defaultSectionId,
+          topicId: defaultTopicId,
+        })
+
+        setExtractionWarnings(
+          result.warnings ?? []
+        )
+
+        toast.success(
+          `${result.questions.length} question(s) extracted. Review them before saving.`
+        )
+      } catch (cause) {
+        console.error(
+          "[CBT:EXTRACT_QUESTIONS]",
+          cause
+        )
+
+        setError(
+          "Unable to process the questions. Please try again."
+        )
+
+        toast.error(
+          "Question extraction failed."
+        )
+      }
+    })
+  }
+
+  function extract() {
+    if (!canExtract) return
 
     if (
-      source === "paste" &&
-      !pastedText.trim()
+      unsavedQuestions.length > 0
     ) {
-      setError("Paste your questions first.")
-      return
-    }
-
-    if (unsavedQuestions.length > 0) {
       setConfirmation("replace")
       return
     }
@@ -395,62 +651,96 @@ const performExtract = () => {
     performExtract()
   }
 
-  const assignSection = (id: string) => {
+  function assignSection(id: string) {
     setDefaultSectionId(id)
     assignAll("sectionId", id)
   }
 
-  const assignTopic = (id: string) => {
+  function assignTopic(id: string) {
     setDefaultTopicId(id)
     assignAll("topicId", id)
   }
 
-  const saveReviewed = async () => {
-    if (!readyToSave.length || busy || !editable) {
+  async function saveReviewed() {
+    if (
+      !ready ||
+      busy ||
+      !editable ||
+      readyToSave.length === 0
+    ) {
       return
     }
+
+    const batch =
+      readyToSave.slice(
+        0,
+        MAX_BATCH_SIZE
+      )
 
     setSaving(true)
 
     try {
-      const response =
+      const result =
         await saveImportedQuestionsAction(
           examId,
           slug,
-          readyToSave.map(question => ({
+          batch.map((question) => ({
             id: question.id,
-            sectionId: question.sectionId,
-            topicId: question.topicId,
-            prompt: question.prompt,
-            options: question.options,
-            correctOption: question.correctOption,
-            explanation: question.explanation,
-            difficulty: question.difficulty,
-            points: question.points,
+            sectionId:
+              question.sectionId,
+            topicId:
+              question.topicId,
+            prompt:
+              question.prompt,
+            options:
+              question.options,
+            correctOption:
+              question.correctOption,
+            explanation:
+              question.explanation,
+            difficulty:
+              question.difficulty,
+            points:
+              question.points,
           }))
         )
 
-      if (response.savedIds.length > 0) {
-        markSaved(response.savedIds)
+      if (result.savedIds.length > 0) {
+        markSaved(result.savedIds)
 
         toast.success(
-          `${response.savedIds.length} questions saved.`
+          `${result.savedIds.length} question(s) saved successfully.`
         )
 
-        // Keep the review open for partial saves.
-        // Navigate only when all unsaved questions
-        // were successfully saved.
-        if (
-          response.savedIds.length ===
-            unsavedQuestions.length &&
-          !response.error
-        ) {
-          router.push(urls.examQuestions(slug))
-        }
+        router.refresh()
       }
 
-      if (response.error) {
-        toast.error(response.error)
+      if (result.error) {
+        toast.error(result.error)
+      }
+
+      // Leave the review open when some
+      // unsaved questions still need saving.
+      const allUnsavedSaved =
+        result.savedIds.length ===
+          unsavedQuestions.length &&
+        !result.error
+
+      if (allUnsavedSaved) {
+        router.push(
+          urls.examDetails(slug)
+        )
+        router.refresh()
+        return
+      }
+
+      if (
+        !result.error &&
+        result.savedIds.length > 0
+      ) {
+        toast.info(
+          "The remaining questions are still in your review. Continue with the next batch."
+        )
       }
     } catch (cause) {
       console.error(
@@ -459,14 +749,14 @@ const performExtract = () => {
       )
 
       toast.error(
-        "The save result could not be confirmed. Check the examination before retrying."
+        "Unable to confirm the save result. Check the examination before retrying to avoid duplicates."
       )
     } finally {
       setSaving(false)
     }
   }
 
-  const confirmAction = () => {
+  function confirmAction() {
     if (busy) return
 
     const action = confirmation
@@ -482,173 +772,293 @@ const performExtract = () => {
       setExtractionWarnings([])
       clearFile()
       setPastedText("")
-      toast.info("Import draft discarded.")
+      setError("")
+
+      toast.info(
+        "Local import draft cleared. Saved examination questions were not deleted."
+      )
     }
   }
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 pb-24">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <Link
-            href={urls.examQuestions(slug)}
-            className="inline-flex items-center gap-2 text-xs font-medium text-primary hover:underline"
-          >
-            <ArrowLeft className="size-3.5" />
-            Exam Questions
-          </Link>
-
-          <h1 className="text-xl font-bold text-foreground">
-            Import Questions
-          </h1>
-
-          <p className="text-sm text-foreground/75">
-            Paste or upload questions for {title},
-            then review before saving.
-          </p>
-        </div>
+      {/* PAGE NAVIGATION */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link
+          href={urls.examDetails(slug)}
+          className="inline-flex items-center gap-2 text-sm font-semibold text-foreground/80 hover:text-primary"
+        >
+          <ArrowLeft className="size-4" />
+          Exam Questions
+        </Link>
 
         <Badge
           variant="outline"
-          className="border-primary/25"
+          className="border-violet-500/30 bg-violet-500/10 font-semibold text-violet-700 dark:text-violet-300"
         >
-          {bankName} · {categoryName}
+          Bulk Import
         </Badge>
-      </header>
+      </div>
 
-      <Card className="gap-0 overflow-hidden border-primary/20 p-0 shadow-none">
-        <CardHeader className="border-b bg-primary/5 px-4 py-3">
-          <CardTitle className="text-sm font-bold">
-            Add Questions
-          </CardTitle>
+      {/* HEADER */}
+      <header className="overflow-hidden rounded-xl border bg-card">
+        <div className="flex flex-wrap items-start justify-between gap-3 bg-primary/5 p-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white">
+              <FileUp className="size-5" />
+            </div>
 
-          <CardDescription className="text-xs">
-            Choose how to bring questions into the examination.
-          </CardDescription>
-        </CardHeader>
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold tracking-tight">
+                Import Questions
+              </h1>
 
-        <CardContent className="space-y-0 gap-4 px-4 py-4">
-          {/* Single source switch */}
-          <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted/50 p-1">
+              <p className="mt-1 break-words text-sm font-semibold text-foreground/85">
+                {title}
+              </p>
+
+              <p className="mt-1 text-xs text-foreground/75">
+                Upload or paste, review,
+                then save to your examination.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
+              variant="outline"
               size="sm"
-              variant={
-                source === "paste"
-                  ? "default"
-                  : "ghost"
+              disabled={templateBusy}
+              onClick={() =>
+                void downloadTemplate()
               }
+              className="bg-background shadow-none"
+            >
+              {templateBusy ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
+
+              Word Template
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                void copyTemplate()
+              }
+              className="bg-background shadow-none"
+            >
+              <Copy className="size-4" />
+              Copy Format
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-t px-4 py-2.5 text-xs">
+          <BookOpen className="size-4 text-emerald-600" />
+
+          <span className="font-semibold">
+            {bankName}
+          </span>
+
+          <span className="text-foreground/50">
+            /
+          </span>
+
+          <span className="font-semibold">
+            {categoryName}
+          </span>
+        </div>
+      </header>
+
+
+      {/* IMPORT SOURCE */}
+      <section className="overflow-hidden rounded-xl border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-blue-500/5 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <FileText className="size-4 text-blue-600" />
+
+            <h2 className="text-sm font-bold">
+              Import Source
+            </h2>
+          </div>
+
+          <span className="text-xs font-semibold text-foreground/70">
+            Choose one method
+          </span>
+        </div>
+
+        <div className="space-y-4 p-4">
+          {/* SOURCE SWITCH */}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
               disabled={busy}
               onClick={() => {
                 setSource("paste")
                 setError("")
               }}
-              className="shadow-none"
+              aria-pressed={
+                source === "paste"
+              }
+              className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-semibold transition-colors ${
+                source === "paste"
+                  ? "border-blue-500 bg-blue-500/10 text-blue-800 dark:text-blue-300"
+                  : "bg-background hover:border-primary/40"
+              } disabled:opacity-50`}
             >
               <ClipboardPaste className="size-4" />
-              Paste or Type Text
-            </Button>
+              Paste / Type
+            </button>
 
-            <Button
+            <button
               type="button"
-              size="sm"
-              variant={
-                source === "document"
-                  ? "default"
-                  : "ghost"
-              }
               disabled={busy}
               onClick={() => {
                 setSource("document")
                 setError("")
               }}
-              className="shadow-none"
+              aria-pressed={
+                source === "document"
+              }
+              className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-semibold transition-colors ${
+                source === "document"
+                  ? "border-blue-500 bg-blue-500/10 text-blue-800 dark:text-blue-300"
+                  : "bg-background hover:border-primary/40"
+              } disabled:opacity-50`}
             >
               <Upload className="size-4" />
               Upload Word
-            </Button>
+            </button>
           </div>
 
           {source === "paste" ? (
             <div className="space-y-2">
- 
               <RichTextEditor
                 variant="exam"
                 label="Paste Questions"
                 value={pastedText}
                 onChange={setPastedText}
                 placeholder="Paste or type your questions here..."
-                minHeight={240}
+                minHeight={220}
                 disabled={!editable || busy}
               />
 
-              {/* <Textarea
-                id="bulk-question-text"
-                value={pastedText}
-                onChange={event =>
-                  setPastedText(event.target.value)
-                }
-                placeholder={sample}
-                rows={12}
-                maxLength={100000}
-                disabled={!editable || busy}
-                className="min-h-64 resize-y border-primary/20 bg-background font-mono text-sm leading-6 shadow-none"
-              /> */}
-
-              <div className="flex items-center justify-between gap-2 text-xs text-foreground/65">
-                <span>
-                  Paste numbered questions, options and answers.
-                </span>
-                <span className="tabular-nums">
-                  {pastedText.length.toLocaleString()} characters
-                </span>
-              </div>
+              <p className="text-xs leading-5 text-foreground/75">
+                Use numbered questions,
+                options A–D and an
+                Answer line for each question.
+              </p>
             </div>
           ) : (
-            <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-primary/25 bg-primary/5 px-5 py-8 text-center hover:bg-primary/10">
-              <div className="rounded-lg bg-background p-3 text-primary">
-                <Upload className="size-5" />
-              </div>
+            <div className="space-y-2">
+              <label
+                className={`flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-blue-500/30 bg-blue-500/5 px-5 py-7 text-center transition-colors hover:bg-blue-500/10 ${
+                  !editable || busy
+                    ? "cursor-not-allowed opacity-60"
+                    : "cursor-pointer"
+                }`}
+              >
+                <div className="flex size-11 items-center justify-center rounded-xl bg-background text-blue-600">
+                  <Upload className="size-5" />
+                </div>
 
-              <span className="text-sm font-semibold text-foreground">
-                {file?.name ?? "Choose a Word document"}
-              </span>
+                <span className="max-w-full break-all text-sm font-semibold">
+                  {file?.name ??
+                    "Choose a Word document"}
+                </span>
 
-              <span className="text-xs text-foreground/70">
-                .docx · Maximum 5 MB
-              </span>
+                <span className="text-xs font-medium text-foreground/75">
+                  .docx only · Maximum 5 MB
+                </span>
 
-              <input
-                ref={fileInput}
-                type="file"
-                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                className="sr-only"
-                disabled={!editable || busy}
-                onChange={event => {
-                  setFile(
-                    event.target.files?.[0] ?? null
-                  )
-                  setError("")
-                }}
-              />
-            </label>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  className="sr-only"
+                  disabled={!editable || busy}
+                  onChange={(event) => {
+                    setFile(
+                      event.target.files?.[0] ??
+                        null
+                    )
+
+                    setError("")
+                  }}
+                />
+              </label>
+
+              {file && (
+                <div className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <FileCheck2 className="size-4 shrink-0 text-emerald-600" />
+
+                    <span className="truncate text-xs font-medium">
+                      {file.name}
+                    </span>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    onClick={clearFile}
+                    className="shrink-0 shadow-none"
+                  >
+                    Remove
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
 
-          <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-3">
-            <p className="text-xs font-semibold text-sky-800 dark:text-sky-300">
-              Recommended question format
-            </p>
+          {/* COMPACT FORMAT GUIDE */}
+          <details className="group rounded-lg border border-sky-500/25 bg-sky-500/5">
+            <summary className="cursor-pointer px-3 py-2.5 text-xs font-bold text-sky-800 dark:text-sky-300">
+              View required A–D question format
+            </summary>
 
-            <pre className="mt-2 whitespace-pre-wrap text-xs leading-5 text-foreground/80">
-              {sample}
-            </pre>
+            <div className="border-t border-sky-500/20 px-3 py-3">
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-foreground/85">
+                {SAMPLE_QUESTIONS}
+              </pre>
 
-            <p className="mt-2 text-xs text-foreground/65">
-              Other formats supported by your Word importer
-              can also be pasted here. Review the extracted
-              questions before saving.
-            </p>
-          </div>
+              <p className="mt-2 text-xs leading-5 text-foreground/75">
+                Every question should include
+                options A, B, C and D, followed
+                by an answer such as Answer: C.
+                The explanation is optional.
+              </p>
+            </div>
+          </details>
+
+          {!hasDefaults && (
+            <div
+              role="alert"
+              className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm font-medium text-amber-900 dark:text-amber-300"
+            >
+              This examination needs a valid
+              question bank and category
+              before importing questions.
+            </div>
+          )}
+
+          {!editable && (
+            <div
+              role="alert"
+              className="rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive"
+            >
+              This examination is not
+              available for editing.
+            </div>
+          )}
 
           {error && (
             <div
@@ -660,37 +1070,18 @@ const performExtract = () => {
             </div>
           )}
 
-          {!editable && (
-            <div className="rounded-lg border border-destructive/25 p-3 text-sm text-destructive">
-              This examination is not available for editing.
-            </div>
-          )}
-
-          <div className="flex flex-wrap justify-end gap-2">
-            {source === "document" && file && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={clearFile}
-                className="shadow-none"
-              >
-                Clear File
-              </Button>
-            )}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+            <p className="text-xs text-foreground/70">
+              You can edit the extracted
+              questions before saving.
+            </p>
 
             <Button
               type="button"
-              size="sm"
               onClick={extract}
               disabled={
-                busy ||
-                !ready ||
-                !editable ||
-                (source === "document"
-                  ? !file
-                  : !pastedText.trim())
+                !canExtract ||
+                !hasDefaults
               }
               className="shadow-none"
             >
@@ -705,208 +1096,262 @@ const performExtract = () => {
                 : "Extract Questions"}
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
+      {/* LOADING LOCAL DRAFT */}
       {!ready && (
-        <p className="flex items-center justify-center gap-2 py-8 text-sm text-foreground/70">
+        <div className="flex items-center justify-center gap-2 rounded-xl border py-8 text-sm font-medium">
           <Loader2 className="size-4 animate-spin" />
-          Restoring import draft...
-        </p>
+          Restoring your import draft...
+        </div>
       )}
 
+      {/* REVIEW WORKSPACE */}
       {ready && questions.length > 0 && (
         <section className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-bold text-foreground">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <h2 className="flex items-center gap-2 text-lg font-bold">
+                <Layers3 className="size-5 text-violet-600" />
                 Review Questions
               </h2>
 
-              <p className="mt-1 text-xs text-foreground/70">
-                Check answers, edit questions and assign
-                their sections before saving.
+              <p className="text-xs font-medium text-foreground/75">
+                Review answers, adjust marks,
+                and assign sections before saving.
               </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Badge variant="secondary">
-                {questions.length} imported
+              <Badge
+                variant="outline"
+                className="border-sky-500/30 bg-sky-500/10"
+              >
+                {questions.length} total
               </Badge>
 
-              <Badge className="bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300">
+              <Badge
+                variant="outline"
+                className="border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
+              >
                 {readyToSave.length} ready
               </Badge>
 
               {needsReview.length > 0 && (
-                <Badge className="bg-amber-500/10 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300">
-                  {needsReview.length} need review
+                <Badge
+                  variant="outline"
+                  className="border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                >
+                  {needsReview.length} need attention
                 </Badge>
               )}
             </div>
           </div>
 
+          {/* COUNTS */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <SummaryStat
+              label="Imported"
+              value={questions.length}
+              tone="blue"
+            />
+
+            <SummaryStat
+              label="Ready"
+              value={readyToSave.length}
+              tone="green"
+            />
+
+            <SummaryStat
+              label="Needs Review"
+              value={needsReview.length}
+              tone="amber"
+            />
+
+            <SummaryStat
+              label="Saved"
+              value={savedCount}
+              tone="violet"
+            />
+          </div>
+
+          {/* EXTRACTION WARNINGS */}
           {extractionWarnings.length > 0 && (
             <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-3">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+              <div className="flex items-center gap-2">
+                <AlertCircle className="size-4 text-amber-600" />
 
-                <div>
-                  <p className="text-sm font-semibold">
-                    Extraction notices
-                  </p>
+                <h3 className="text-sm font-bold">
+                  Extraction Notices
+                </h3>
+              </div>
 
-                  <ul className="mt-2 list-inside list-disc space-y-1 text-xs">
-                    {extractionWarnings.map(
-                      (warning, index) => (
-                        <li key={index}>{warning}</li>
-                      )
-                    )}
-                  </ul>
-                </div>
+              <div className="mt-2 space-y-1">
+                {extractionWarnings.map(
+                  (warning, index) => (
+                    <p
+                      key={`${index}-${warning}`}
+                      className="text-xs leading-5"
+                    >
+                      {warning}
+                    </p>
+                  )
+                )}
               </div>
             </div>
           )}
 
+          {/* SAVED NOTICE */}
           {savedCount > 0 && (
-            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3 text-sm">
-              <CheckCircle2 className="mr-2 inline size-4 text-emerald-600" />
-              {savedCount} questions already saved.
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3">
+              <CheckCircle2 className="size-4 text-emerald-600" />
+
+              <p className="text-xs font-semibold">
+                {savedCount} question(s)
+                already saved to this examination.
+              </p>
             </div>
           )}
 
+          {/* BULK CLASSIFICATION */}
           {unsavedQuestions.length > 0 && (
-            <Card className="gap-0 border-primary/20 py-0 shadow-none">
-              <CardHeader className="border-b bg-primary/5 py-3">
-                <CardTitle className="text-sm font-bold">
-                  Organize Questions
-                </CardTitle>
+            <div className="overflow-hidden rounded-xl border bg-card">
+              <div className="border-b bg-emerald-500/5 px-4 py-3">
+                <h3 className="text-sm font-bold">
+                  Organize Imported Questions
+                </h3>
 
-                <CardDescription className="text-xs">
-                  Assign a section or topic to all unsaved
-                  questions. Individual questions can still
-                  be changed in the editor.
-                </CardDescription>
-              </CardHeader>
+                <p className="mt-1 text-xs text-foreground/75">
+                  Apply one section or optional
+                  subtopic to all unsaved questions.
+                </p>
+              </div>
 
-              <CardContent className="grid gap-4 py-4 sm:grid-cols-2">
-                <div onFocusCapture={() => void loadCatalogs()}>
-                  <SelectOrCreateDropdown
-                    name="import_section"
-                    label="Examination Section"
-                    description="Applies to all unsaved questions."
-                    placeholder="Choose section"
-                    createLabel="Create New Section"
-                    value={defaultSectionId}
-                    options={sections}
-                    availableOptions={organizationSections.map(
-                      item => ({
-                        id: item.id,
-                        name: item.name,
-                      })
-                    )}
-                    onChange={assignSection}
-                    onUseAvailable={id =>
-                      addExistingExamSectionAction(
-                        examId,
-                        id
+              <div
+                className="grid gap-3 p-4 sm:grid-cols-2"
+                onFocusCapture={() =>
+                  void loadCatalogs()
+                }
+              >
+                <SelectOrCreateDropdown
+                  name="import_section"
+                  label="Examination Section"
+                  description="Applies to all unsaved questions."
+                  placeholder="Select section"
+                  createLabel="Create Section"
+                  value={defaultSectionId}
+                  options={sections}
+                  availableOptions={
+                    organizationSections
+                  }
+                  onChange={assignSection}
+                  onUseAvailable={(id) =>
+                    addExistingExamSectionAction(
+                      examId,
+                      id
+                    )
+                  }
+                  onCreate={(name) =>
+                    createExamSectionAction(
+                      examId,
+                      name
+                    )
+                  }
+                  onCreated={(option) => {
+                    setSections((current) =>
+                      addOption(
+                        current,
+                        option
                       )
-                    }
-                    onCreate={name =>
-                      createExamSectionAction(
-                        examId,
-                        name
-                      )
-                    }
-                    onCreated={option => {
-                      setSections(current =>
-                        addOption(current, option)
-                      )
-                      assignSection(option.id)
-                    }}
-                    disabled={busy || !editable}
-                  />
-                </div>
+                    )
 
-                <div onFocusCapture={() => void loadCatalogs()}>
-                  <SelectOrCreateDropdown
-                    name="import_topic"
-                    label="Question Topic"
-                    description="Optional. Applies to all unsaved questions."
-                    placeholder="Choose topic"
-                    createLabel="Create New Topic"
-                    value={defaultTopicId}
-                    options={topics}
-                    availableOptions={organizationTopics}
-                    onChange={assignTopic}
-                    onUseAvailable={id =>
-                      useOrganizationTopicAction(
-                        id,
-                        bankId,
-                        categoryId
+                    assignSection(
+                      option.id
+                    )
+                  }}
+                  disabled={busy || !editable}
+                />
+
+                <SelectOrCreateDropdown
+                  name="import_topic"
+                  label="Subtopic (optional)"
+                  description="More specific grouping within the bank category."
+                  placeholder="Select subtopic"
+                  createLabel="Create Subtopic"
+                  value={defaultTopicId}
+                  options={topics}
+                  availableOptions={
+                    organizationTopics
+                  }
+                  onChange={assignTopic}
+                  onUseAvailable={(id) =>
+                    useOrganizationTopicAction(
+                      id,
+                      bankId,
+                      categoryId
+                    )
+                  }
+                  onCreate={(name) =>
+                    createTopicAction(
+                      bankId,
+                      categoryId,
+                      name
+                    )
+                  }
+                  onCreated={(option) => {
+                    setTopics((current) =>
+                      addOption(
+                        current,
+                        option
                       )
-                    }
-                    onCreate={name =>
-                      createTopicAction(
-                        bankId,
-                        categoryId,
-                        name
-                      )
-                    }
-                    onCreated={option => {
-                      setTopics(current =>
-                        addOption(current, option)
-                      )
-                      assignTopic(option.id)
-                    }}
-                    disabled={
-                      busy ||
-                      !editable ||
-                      !bankId ||
-                      !categoryId
-                    }
-                  />
-                </div>
-              </CardContent>
-            </Card>
+                    )
+
+                    assignTopic(
+                      option.id
+                    )
+                  }}
+                  disabled={
+                    busy ||
+                    !editable ||
+                    !hasDefaults
+                  }
+                />
+              </div>
+            </div>
           )}
 
+          {/* EXISTING QUESTION REVIEW/EDITING UI */}
           <ImportedQuestionList
             sections={sections}
             topics={topics}
             disabled={busy || !editable}
           />
 
-          <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/25 bg-background/95 p-3 backdrop-blur-md">
-            <div>
+          {/* SAVE BAR */}
+          <div className="sticky bottom-3 z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/25 bg-background/95 p-3 backdrop-blur-md">
+            <div className="min-w-0">
               <p className="text-sm font-bold">
                 {readyToSave.length} ready to save
               </p>
 
-              <p className="mt-1 text-xs text-foreground/70">
-                {needsReview.length} need attention ·{" "}
-                {savedCount} already saved
+              <p className="mt-1 text-xs font-medium text-foreground/75">
+                {needsReview.length} need attention
+                {" · "}
+                {savedCount} saved
               </p>
 
-              <p className="mt-1 text-xs text-foreground/65">
-                Review changes are saved in this browser.
+              <p className="mt-1 text-[11px] text-foreground/65">
+                Changes are temporarily stored
+                in this browser.
               </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {savedCount > 0 && (
-                <LinkButton
-                  href={urls.examQuestions(slug)}
-                  size="sm"
-                >
-                  View Exam
-                </LinkButton>
-              )}
-
               <Button
                 type="button"
-                size="sm"
                 variant="outline"
+                size="sm"
                 disabled={busy}
                 onClick={() =>
                   setConfirmation("discard")
@@ -917,23 +1362,44 @@ const performExtract = () => {
                 Discard Draft
               </Button>
 
+              {savedCount > 0 && (
+                <Button
+                  asChild
+                  variant="outline"
+                  size="sm"
+                  className="shadow-none"
+                >
+                  <Link
+                    href={urls.examDetails(slug)}
+                  >
+                    View Exam
+                  </Link>
+                </Button>
+              )}
+
               {readyToSave.length > 0 && (
                 <Button
                   type="button"
                   size="sm"
                   disabled={busy || !editable}
-                  onClick={saveReviewed}
+                  onClick={() =>
+                    void saveReviewed()
+                  }
                   className="shadow-none"
                 >
                   {saving ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : (
-                    <CheckCircle2 className="size-4" />
+                    <Save className="size-4" />
                   )}
 
                   {saving
                     ? "Saving..."
-                    : `Save ${readyToSave.length} Questions`}
+                    : `Save ${savingCount} Question${
+                        savingCount === 1
+                          ? ""
+                          : "s"
+                      }`}
                 </Button>
               )}
             </div>
@@ -941,32 +1407,73 @@ const performExtract = () => {
         </section>
       )}
 
-      <ConfirmActionDialog
+      {/* EMPTY STATE */}
+      {ready && questions.length === 0 && (
+        <div className="rounded-xl border border-dashed border-primary/25 bg-primary/5 p-6 text-center">
+          <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-primary/10">
+            <FileUp className="size-6 text-primary" />
+          </div>
+
+          <h3 className="mt-3 text-sm font-bold">
+            Ready to Import
+          </h3>
+
+          <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-foreground/75">
+            Paste your questions or upload
+            a Word document. Extracted questions
+            will appear here for review before
+            anything is saved to the examination.
+          </p>
+        </div>
+      )}
+
+      {/* CONFIRMATION DIALOG */}
+      <AlertDialog
         open={confirmation !== null}
-        onOpenChange={open => {
+        onOpenChange={(open) => {
           if (!open && !busy) {
             setConfirmation(null)
           }
         }}
-        title={
-          confirmation === "replace"
-            ? "Replace unsaved questions?"
-            : "Discard import draft?"
-        }
-        description={
-          confirmation === "replace"
-            ? `This will replace ${unsavedQuestions.length} unsaved questions in your review. Questions already saved to the examination are not deleted.`
-            : `This will discard ${unsavedQuestions.length} unsaved questions from this browser. Questions already saved to the examination remain available.`
-        }
-        confirmLabel={
-          confirmation === "replace"
-            ? "Replace Questions"
-            : "Discard Draft"
-        }
-        destructive={confirmation === "discard"}
-        pending={busy}
-        onConfirm={confirmAction}
-      />
+      >
+        <AlertDialogContent className="shadow-none">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmation === "replace"
+                ? "Replace unsaved questions?"
+                : "Discard local import draft?"}
+            </AlertDialogTitle>
+
+            <AlertDialogDescription>
+              {confirmation === "replace"
+                ? `This will replace ${unsavedQuestions.length} unsaved question(s) in your review. Questions already saved to the examination will remain untouched.`
+                : `This will clear the local import review. Any questions already saved to the examination will remain in the database.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={busy}
+              className="shadow-none"
+            >
+              Cancel
+            </AlertDialogCancel>
+
+            <AlertDialogAction
+              disabled={busy}
+              onClick={(event) => {
+                event.preventDefault()
+                confirmAction()
+              }}
+              className="shadow-none"
+            >
+              {confirmation === "replace"
+                ? "Replace Questions"
+                : "Discard Draft"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

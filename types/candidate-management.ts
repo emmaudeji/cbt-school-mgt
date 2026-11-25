@@ -42,4 +42,5 @@ export type CandidateManagementData = {
   publicLinkCode: string | null
   candidates: ManagedCandidate[]
   assignments: CandidateAssignment[]
+  examEntryCode: string | null
 }

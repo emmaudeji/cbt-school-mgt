@@ -1,3 +1,4 @@
+
 "use client"
 
 import { useState, useTransition, type FormEvent } from "react"
@@ -5,21 +6,23 @@ import { useRouter } from "next/navigation"
 import { BookOpen, Loader2, Save, Settings2, ShieldCheck } from "lucide-react"
 import { toast } from "react-toastify"
 
+import { urls } from "@/constants"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+
 import type { ExamSettings, ExamSettingsInput } from "@/types/exam-settings"
 import { saveExamSettingsAction } from "../services/action"
 import { ExamScheduleFields } from "./ExamScheduleFields"
 import { ExamResultReviewFields, type ResultReviewValues } from "./ExamSettingsResultReviewFields"
 import { ExamSettingsSaveDialog } from "./ExamSettingsSaveDialog"
-import { urls } from "@/constants"
 
 type Props = {
   exam: ExamSettings
+  isSchoolExam: boolean
   resultSettings: {
     show_result_after_submission: boolean
     allow_exam_review: boolean
@@ -27,38 +30,39 @@ type Props = {
   }
 }
 
-function toLocalInput(value: string | null): string {
+function toLocal(value: string | null) {
   if (!value) return ""
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ""
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-    .toISOString()
-    .slice(0, 16)
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 16)
 }
 
-function toIsoDate(value: string): string | null {
+function toIso(value: string) {
   if (!value) return null
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
-const sectionClass = "overflow-hidden rounded-xl border border-primary/25 bg-primary/[0.035]"
-const sectionHeaderClass = "flex items-center gap-2 border-b border-primary/15 bg-primary/10 px-4 py-3"
+const box = "overflow-hidden rounded-xl border bg-card"
+const field = "h-10 bg-background shadow-none"
 
-export function ExamSettingsForm({ exam, resultSettings }: Props) {
+export function ExamSettingsForm({ exam, resultSettings, isSchoolExam }: Props) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const editable = exam.status === "draft" || exam.status === "active"
-  const isPublished = exam.status === "active"
-  const [saveDialogOpen, setSaveDialogOpen] = useState(false)
+  const published = exam.status === "active"
+  const noun = isSchoolExam ? "examination" : "test"
+  const person = isSchoolExam ? "student" : "candidate"
 
   const [title, setTitle] = useState(exam.title)
   const [description, setDescription] = useState(exam.description ?? "")
   const [instructions, setInstructions] = useState(exam.instructions ?? "")
-  const [durationMinutes, setDurationMinutes] = useState(Math.round((exam.duration_seconds ?? 3600) / 60))
-  const [availableFrom, setAvailableFrom] = useState(toLocalInput(exam.available_from))
-  const [availableUntil, setAvailableUntil] = useState(toLocalInput(exam.available_until))
-  const [maxAttempts, setMaxAttempts] = useState(exam.max_attempts ?? 1)
+  const [duration, setDuration] = useState(Math.round((exam.duration_seconds ?? 3600) / 60))
+  const [from, setFrom] = useState(toLocal(exam.available_from))
+  const [until, setUntil] = useState(toLocal(exam.available_until))
+  const [attempts, setAttempts] = useState(exam.max_attempts ?? 1)
   const [shuffleQuestions, setShuffleQuestions] = useState(exam.shuffle_questions ?? true)
   const [shuffleOptions, setShuffleOptions] = useState(exam.shuffle_options ?? true)
   const [results, setResults] = useState<ResultReviewValues>({
@@ -67,48 +71,45 @@ export function ExamSettingsForm({ exam, resultSettings }: Props) {
     reviewRelease: resultSettings.review_release,
   })
 
-
-  const save = (event: FormEvent<HTMLFormElement>) => {
+  function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-
     if (pending || !editable) return
 
-    const from = toIsoDate(availableFrom)
-    const until = toIsoDate(availableUntil)
-
-    if (
-      (availableFrom && !from) ||
-      (availableUntil && !until)
-    ) {
-      toast.error("Enter valid examination dates and times.")
+    if (title.trim().length < 2 || title.trim().length > 200) {
+      toast.error("Enter a title between 2 and 200 characters.")
+      return
+    }
+    if (!Number.isInteger(duration) || duration < 1 || duration > 1440) {
+      toast.error("Duration must be between 1 and 1,440 minutes.")
+      return
+    }
+    if (!Number.isInteger(attempts) || attempts < 1 || attempts > 100) {
+      toast.error("Maximum attempts must be between 1 and 100.")
+      return
+    }
+    if ((from && !toIso(from)) || (until && !toIso(until))) {
+      toast.error("Enter valid dates and times.")
+      return
+    }
+    if (from && until && new Date(until) <= new Date(from)) {
+      toast.error("Closing time must be later than the opening time.")
       return
     }
 
-    if (
-      from &&
-      until &&
-      new Date(until) <= new Date(from)
-    ) {
-      toast.error(
-        "The examination must close after candidates are allowed to start."
-      )
-      return
-    }
-
-    setSaveDialogOpen(true)
+    setConfirmOpen(true)
   }
 
-  const confirmSave = () => {
+  function confirmSave() {
     if (pending || !editable) return
 
     const input: ExamSettingsInput = {
-      title,
-      description,
-      instructions,
-      durationMinutes,
-      availableFrom: toIsoDate(availableFrom),
-      availableUntil: toIsoDate(availableUntil),
-      maxAttempts,
+      title: title.trim(),
+      description: description.trim(),
+      instructions: instructions.trim(),
+      durationMinutes: duration,
+      availableFrom: toIso(from),
+      availableUntil: toIso(until),
+      maxAttempts: attempts,
       shuffleQuestions,
       shuffleOptions,
       showResultAfterSubmission: results.showResultAfterSubmission,
@@ -118,171 +119,152 @@ export function ExamSettingsForm({ exam, resultSettings }: Props) {
 
     startTransition(async () => {
       try {
-        const response = await saveExamSettingsAction(
-          exam.id,
-          exam.slug,
-          input
-        )
-
+        const response = await saveExamSettingsAction(exam.id, exam.slug, input)
         if (!response.success) {
-          toast.error(
-            response.error ?? "Unable to save examination settings."
-          )
+          toast.error(response.error ?? "Unable to save settings.")
           return
         }
-
-        setSaveDialogOpen(false)
-
-        toast.success(
-          isPublished
-            ? "Settings saved for the next revision. The current examination is unchanged."
-            : "Examination settings saved. Publish when you are ready."
-        )
-
-        // router.refresh()
+        setConfirmOpen(false)
+        toast.success(published
+          ? "Settings saved for the next revision."
+          : `${isSchoolExam ? "Examination" : "Test"} settings saved.`)
         router.push(urls.examPublish(exam.slug))
-        
+        router.refresh()
       } catch (error) {
         console.error("[CBT:SAVE_SETTINGS]", error)
-
-        toast.error("Unable to save examination settings.")
+        toast.error("Unable to save settings.")
       }
     })
   }
 
-
   return (
-<>
-    <form onSubmit={save} className="space-y-3 pb-16">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-xl font-bold text-foreground">Examination Settings</h2>
-          <p className="text-sm text-foreground/85">Manage the exam schedule, delivery and results.</p>
+    <>
+      <form onSubmit={save} className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-bold">Configure {isSchoolExam ? "Examination" : "Test"}</h2>
+          <Badge variant="outline" className={published
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+            : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"}>
+            {published ? "Published" : exam.status}
+          </Badge>
         </div>
-        <Badge variant="outline" className="border-primary/30 bg-primary/10 text-foreground capitalize shadow-none">
-          {exam.status === "active" ? "Published" : exam.status}
-        </Badge>
-      </div>
 
-      {isPublished && (
-        <div className="rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-foreground">
-          <p className="font-semibold">Editing settings for a future revision</p>
-          <p className="mt-1 text-sm leading-5 text-foreground/85">
-            Your published examination is still in use. Saving changes the editable blueprint only.
-            Candidates on the existing sealed revision keep its original schedule, duration and rules.
-            You must publish a new revision for changes to take effect.
+        {published && (
+          <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-xs leading-5">
+            <strong>Editing the next revision.</strong> Current published attempts retain their sealed settings.
+            Publish a new revision to release your changes.
+          </div>
+        )}
+        {!editable && (
+          <p className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
+            This {noun} cannot currently be edited.
           </p>
-        </div>
-      )}
+        )}
 
-      {!editable && (
-        <div className="rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 text-sm">
-          This examination is archived. Restore it before changing settings.
-        </div>
-      )}
+        <section className={box}>
+          <div className="flex items-center gap-2 border-b bg-blue-500/10 px-4 py-3">
+            <BookOpen className="size-4 text-blue-600" />
+            <h3 className="text-sm font-bold">General Information</h3>
+          </div>
+          <div className="grid gap-3 p-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="exam-title" className="font-semibold">{isSchoolExam ? "Examination" : "Test"} Title</Label>
+              <Input id="exam-title" required minLength={2} maxLength={200}
+                value={title} onChange={e => setTitle(e.target.value)}
+                disabled={!editable || pending} className={field} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="exam-description" className="font-semibold">Description (optional)</Label>
+              <Textarea id="exam-description" rows={2} maxLength={1000}
+                value={description} onChange={e => setDescription(e.target.value)}
+                disabled={!editable || pending} className="min-h-16 shadow-none" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="exam-instructions" className="font-semibold">
+                Instructions for {isSchoolExam ? "Students" : "Candidates"}
+              </Label>
+              <Textarea id="exam-instructions" rows={2}
+                value={instructions} onChange={e => setInstructions(e.target.value)}
+                placeholder={`Read each question carefully. Submit before the ${noun} closes.`}
+                disabled={!editable || pending} className="min-h-20 shadow-none" />
+            </div>
+          </div>
+        </section>
 
-      <section className={sectionClass}>
-        <div className={sectionHeaderClass}>
-          <BookOpen className="size-4 text-primary" />
-          <h3 className="text-sm font-semibold">General Information</h3>
-        </div>
-        <div className="grid gap-3 p-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="exam-title">Examination title</Label>
-            <Input id="exam-title" required minLength={2} maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} disabled={!editable || pending} className="border-primary/25 bg-background" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="exam-description">Description</Label>
-            <Textarea id="exam-description" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} disabled={!editable || pending} placeholder="What is this examination about?" className="border-primary/25 bg-background" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="exam-instructions">Instructions for candidates</Label>
-            <Textarea id="exam-instructions" rows={3} value={instructions} onChange={(event) => setInstructions(event.target.value)} disabled={!editable || pending} placeholder="Read each question carefully before you answer." className="border-primary/25 bg-background" />
-          </div>
-        </div>
-      </section>
+        <ExamScheduleFields
+          durationMinutes={duration} onDurationChange={setDuration}
+          availableFrom={from} onAvailableFromChange={setFrom}
+          availableUntil={until} onAvailableUntilChange={setUntil}
+          disabled={!editable || pending} isPublished={published}
+          isSchoolExam={isSchoolExam}
+        />
 
-      <ExamScheduleFields
-        durationMinutes={durationMinutes}
-        onDurationChange={setDurationMinutes}
-        availableFrom={availableFrom}
-        onAvailableFromChange={setAvailableFrom}
-        availableUntil={availableUntil}
-        onAvailableUntilChange={setAvailableUntil}
-        disabled={!editable || pending}
-        isPublished={isPublished}
+        <section className={box}>
+          <div className="flex items-center gap-2 border-b bg-violet-500/10 px-4 py-3">
+            <Settings2 className="size-4 text-violet-600" />
+            <h3 className="text-sm font-bold">Attempts & Question Delivery</h3>
+          </div>
+          <div className="grid gap-3 p-4 sm:grid-cols-2">
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="exam-attempts" className="font-semibold">
+                Maximum Attempts per {isSchoolExam ? "Student" : "Candidate"}
+              </Label>
+              <Input id="exam-attempts" type="number" min={1} max={100} step={1}
+                required value={attempts} onChange={e => setAttempts(Number(e.target.value))}
+                disabled={!editable || pending} className={`${field} max-w-40`} />
+              {isSchoolExam && attempts > 1 && (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  Formal school examinations usually allow one attempt.
+                </p>
+              )}
+            </div>
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-violet-500/5 p-3">
+              <Checkbox checked={shuffleQuestions} onCheckedChange={v => setShuffleQuestions(v === true)}
+                disabled={!editable || pending} className="mt-0.5" />
+              <span>
+                <span className="block text-sm font-semibold">Shuffle Questions</span>
+                <span className="text-xs text-foreground/80">Randomize question order for each {person}.</span>
+              </span>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-violet-500/5 p-3">
+              <Checkbox checked={shuffleOptions} onCheckedChange={v => setShuffleOptions(v === true)}
+                disabled={!editable || pending} className="mt-0.5" />
+              <span>
+                <span className="block text-sm font-semibold">Shuffle Answer Options</span>
+                <span className="text-xs text-foreground/80">Randomize the display order of A–D choices.</span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <ExamResultReviewFields value={results} onChange={setResults}
+          disabled={!editable || pending} maxAttempts={attempts}
+          isSchoolExam={isSchoolExam} />
+
+        {editable && (
+          <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-background/95 px-4 py-3 backdrop-blur-sm">
+            <p className="flex items-center gap-2 text-xs font-medium text-foreground/80">
+              <ShieldCheck className="size-4 text-emerald-600" />
+              {published ? "Changes require a new publication." : "Save settings before publishing."}
+            </p>
+            <Button type="submit" disabled={pending} className="shadow-none">
+              {pending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+              {pending ? "Saving..." : published ? "Save Next Revision" : "Save Settings"}
+            </Button>
+          </div>
+        )}
+      </form>
+
+      <ExamSettingsSaveDialog
+        open={confirmOpen} onOpenChange={setConfirmOpen} onConfirm={confirmSave}
+        pending={pending} isPublished={published} isSchoolExam={isSchoolExam}
+        durationMinutes={duration} availableFrom={from} availableUntil={until}
+        showResultAfterSubmission={results.showResultAfterSubmission}
+        allowExamReview={results.allowExamReview}
+        reviewRelease={results.reviewRelease}
       />
-
-      <section className={sectionClass}>
-        <div className={sectionHeaderClass}>
-          <Settings2 className="size-4 text-primary" />
-          <h3 className="text-sm font-semibold">Attempts and Question Delivery</h3>
-        </div>
-        <div className="grid gap-3 p-4 sm:grid-cols-2">
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="exam-attempts">Maximum attempts per candidate</Label>
-            <Input id="exam-attempts" type="number" min={1} max={100} step={1} required value={maxAttempts} onChange={(event) => setMaxAttempts(Number(event.target.value))} disabled={!editable || pending} className="max-w-44 border-primary/25 bg-background" />
-          </div>
-          <label htmlFor="shuffle-questions" className="flex cursor-pointer items-start gap-3 rounded-lg border border-primary/20 bg-background p-3">
-            <Checkbox id="shuffle-questions" checked={shuffleQuestions} onCheckedChange={(checked) => setShuffleQuestions(checked === true)} disabled={!editable || pending} className="mt-0.5" />
-            <span className="space-y-1">
-              <span className="block text-sm font-semibold">Shuffle questions</span>
-              <span className="block text-sm text-foreground/80">Change the question order for each candidate.</span>
-            </span>
-          </label>
-          <label htmlFor="shuffle-options" className="flex cursor-pointer items-start gap-3 rounded-lg border border-primary/20 bg-background p-3">
-            <Checkbox id="shuffle-options" checked={shuffleOptions} onCheckedChange={(checked) => setShuffleOptions(checked === true)} disabled={!editable || pending} className="mt-0.5" />
-            <span className="space-y-1">
-              <span className="block text-sm font-semibold">Shuffle answer options</span>
-              <span className="block text-sm text-foreground/80">Change the order of selectable options for each candidate.</span>
-            </span>
-          </label>
-        </div>
-      </section>
-
-      <ExamResultReviewFields value={results} onChange={setResults} disabled={!editable || pending} maxAttempts={maxAttempts} />
-
-      {editable && (
-        <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-background/95 px-4 py-3 backdrop-blur-sm">
-          <p className="flex items-center gap-2 text-sm font-medium text-foreground/85">
-            <ShieldCheck className="size-4 text-primary" />
-            {isPublished ? "Save changes, then publish a new revision." : "Save settings before publishing."}
-          </p>
-          <Button type="submit" disabled={pending} className="shadow-none">
-            {pending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Save className="size-4" />
-            )}
-
-            {pending
-              ? "Saving..."
-              : isPublished
-                ? "Save for Next Revision"
-                : "Save Settings"}
-          </Button>
-        </div>
-      )}
-    </form>
-
-
-    <ExamSettingsSaveDialog
-      open={saveDialogOpen}
-      onOpenChange={setSaveDialogOpen}
-      onConfirm={confirmSave}
-      pending={pending}
-      isPublished={isPublished}
-      durationMinutes={durationMinutes}
-      availableFrom={availableFrom}
-      availableUntil={availableUntil}
-      showResultAfterSubmission={
-        results.showResultAfterSubmission
-      }
-      allowExamReview={results.allowExamReview}
-      reviewRelease={results.reviewRelease}
-    />
- 
-</>
+    </>
   )
 }
-

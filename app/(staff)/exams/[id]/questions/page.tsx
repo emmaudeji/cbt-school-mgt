@@ -1,16 +1,25 @@
 
 import Link from "next/link"
 import { Suspense } from "react"
-import { ArrowLeft } from "lucide-react"
+import {
+  ArrowLeft,
+  ClipboardPenLine,
+  FileUp,
+} from "lucide-react"
 
 import PageLoader from "@/components/common/PageLoader"
-import { NewQuestionForm } from "@/features/exams/components/NewQuestionForm"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+
+import { NewQuestionForm } from
+  "@/features/exams/components/NewQuestionForm"
+
 import {
   getOrganizationSectionTemplates,
   getOrganizationTopicCatalog,
   getQuestionEditorOptions,
 } from "@/features/exams/services/queries"
-import { LinkButton } from "@/components/shared/LinkButton"
+
 import { urls } from "@/constants"
 
 type Props = {
@@ -61,9 +70,8 @@ async function Wrapper({
       ? query.section_id
       : ""
 
-  // Only preselect a section belonging to this exam.
   const initialSectionId = sections.some(
-    section => section.id === requestedSectionId
+    (section) => section.id === requestedSectionId
   )
     ? requestedSectionId
     : ""
@@ -73,38 +81,84 @@ async function Wrapper({
   })
 
   if (initialSectionId) {
-    uploadParams.set("section_id", initialSectionId)
+    uploadParams.set(
+      "section_id",
+      initialSectionId
+    )
   }
 
   const uploadUrl =
-    `${urls.uploadExamQuestions(exam.slug)}?${uploadParams.toString()}`
+    `${urls.uploadExamQuestions(exam.slug)}` +
+    `?${uploadParams.toString()}`
+
+  const editable =
+    exam.status === "draft" ||
+    exam.status === "active"
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-3">
-          <Link
-            href={urls.examQuestions(exam.slug)}
-            className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
-          >
-            <ArrowLeft className="size-4" />
-            Test Questions
-          </Link>
+    <main className="mx-auto w-full max-w-5xl space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link
+          href={urls.examDetails(exam.slug)}
+          className="inline-flex items-center gap-2 text-sm font-semibold text-foreground/80 transition-colors hover:text-primary"
+        >
+          <ArrowLeft className="size-4" />
+          Exam Questions
+        </Link>
 
-          <div className="space-y-1">
-            <h1 className="text-xl font-bold text-foreground">
+        {editable && (
+          <Button
+            asChild
+            size="sm"
+            variant="outline"
+            className="border-emerald-500/30 bg-emerald-500/5 font-semibold shadow-none hover:bg-emerald-500/10"
+          >
+            <Link href={uploadUrl}>
+              <FileUp className="size-4 text-emerald-600" />
+              Upload Questions
+            </Link>
+          </Button>
+        )}
+      </div>
+
+      <header className="flex flex-wrap items-start justify-between gap-3 rounded-xl border bg-card p-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-violet-600 text-white">
+            <ClipboardPenLine className="size-5" />
+          </div>
+
+          <div className="min-w-0 space-y-1">
+            <h1 className="text-xl font-bold tracking-tight">
               Write Question
             </h1>
 
-            <p className="text-sm text-foreground/80">
-              Add a question to {exam.title}.
+            <p className="break-words text-sm font-medium text-foreground/80">
+              {exam.title}
             </p>
           </div>
         </div>
 
-        <LinkButton href={uploadUrl}>
-          Upload Questions
-        </LinkButton>
+        <Badge
+          className={
+            exam.status === "draft"
+              ? "border border-amber-500/30 bg-amber-500/10 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300"
+              : exam.status === "active"
+                ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 hover:bg-emerald-500/10 dark:text-emerald-300"
+                : ""
+          }
+          variant={
+            exam.status === "draft" ||
+            exam.status === "active"
+              ? "default"
+              : "secondary"
+          }
+        >
+          {exam.status === "draft"
+            ? "Draft"
+            : exam.status === "active"
+              ? "Published"
+              : exam.status}
+        </Badge>
       </header>
 
       <NewQuestionForm
@@ -115,6 +169,6 @@ async function Wrapper({
         organizationTopics={organizationTopics}
         organizationSections={organizationSections}
       />
-    </div>
+    </main>
   )
 }
